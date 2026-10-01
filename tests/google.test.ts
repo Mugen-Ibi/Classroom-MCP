@@ -132,4 +132,55 @@ describe("Google OAuth", () => {
     expect(html).toContain("&#60;script&#62;");
     expect(html).toContain("localhost");
   });
+
+  it("accepts Google's canonical coursework alias during code exchange and refresh", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        url.endsWith("token")
+          ? Response.json({
+              access_token: "access",
+              expires_in: 3600,
+              refresh_token: "refresh",
+              scope: `${CLASSROOM_SCOPES[0]} https://www.googleapis.com/auth/classroom.student-submissions.me.readonly`,
+            })
+          : Response.json({
+              sub: "u",
+              email: "me@example.com",
+              email_verified: true,
+            }),
+      ),
+    );
+    await expect(
+      exchangeGoogleCode(env, "code", "verifier"),
+    ).resolves.toMatchObject({
+      accessToken: "access",
+    });
+    await expect(refreshGoogleGrant(env, props)).resolves.toMatchObject({
+      accessToken: "access",
+    });
+  });
+
+  it("rejects canonical coursework permission without course read access", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json({
+          access_token: "access",
+          expires_in: 3600,
+          refresh_token: "refresh",
+          scope:
+            "https://www.googleapis.com/auth/classroom.student-submissions.me.readonly",
+        }),
+      ),
+    );
+    await expect(
+      exchangeGoogleCode(env, "code", "verifier"),
+    ).rejects.toMatchObject({
+      code: "access_denied",
+    });
+    await expect(refreshGoogleGrant(env, props)).rejects.toMatchObject({
+      code: "invalid_grant",
+    });
+  });
 });

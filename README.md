@@ -73,7 +73,7 @@ Workers Buildsが依存をインストールしてからチェックとデプロ
 
 8. クライアントIDとクライアントシークレットを、次のCloudflareのSecretsへ設定します。
 
-Classroomの`classroom.coursework.me.readonly`は、自分の課題と提出状況の読み取りをカバーします。教師用スコープや書き込みスコープは要求しません。Googleの同意画面で両方のClassroom読み取り権限を許可してください。
+Classroomの`classroom.coursework.me.readonly`は、自分の課題と提出状況の読み取りをカバーします。Google Auth Platformでは同等の`classroom.student-submissions.me.readonly`として表示・保存される場合があり、サーバーはどちらの権限名も受け入れます。教師用スコープや書き込みスコープは要求しません。Googleの同意画面で両方のClassroom読み取り権限を許可してください。
 
 ExternalかつTestingのGoogle OAuthでは、この構成の更新トークンは7日で期限切れになるため、定期的に再接続が必要です。継続運用する場合はGoogleの公開・審査要件を確認してください。学校の管理者が外部アプリへのアクセスを制限している場合は、管理者の許可が必要です。
 

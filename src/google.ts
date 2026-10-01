@@ -7,6 +7,18 @@ export const CLASSROOM_SCOPES = [
 ] as const;
 export const GOOGLE_SCOPES = ["openid", "email", ...CLASSROOM_SCOPES];
 
+function hasClassroomReadScopes(scope: string): boolean {
+  const granted = new Set(scope.split(/\s+/));
+  // Google Auth Platform canonicalizes coursework.me.readonly to this alias.
+  return (
+    granted.has(CLASSROOM_SCOPES[0]) &&
+    (granted.has(CLASSROOM_SCOPES[1]) ||
+      granted.has(
+        "https://www.googleapis.com/auth/classroom.student-submissions.me.readonly",
+      ))
+  );
+}
+
 interface GoogleToken {
   access_token: string;
   expires_in: number;
@@ -117,11 +129,7 @@ export async function exchangeGoogleCode(
     code_verifier: verifier,
     redirect_uri: `${env.PUBLIC_URL}/callback`,
   });
-  const granted = new Set((token.scope ?? "").split(" "));
-  if (
-    !CLASSROOM_SCOPES.every((scope) => granted.has(scope)) ||
-    !token.refresh_token
-  ) {
+  if (!hasClassroomReadScopes(token.scope ?? "") || !token.refresh_token) {
     throw new OAuthError("access_denied", {
       description:
         "Approve all Classroom read permissions and offline access, then reconnect.",
@@ -174,10 +182,7 @@ export async function refreshGoogleGrant(
     grant_type: "refresh_token",
     refresh_token: props.refreshToken,
   });
-  if (
-    token.scope &&
-    !CLASSROOM_SCOPES.every((scope) => token.scope!.split(" ").includes(scope))
-  ) {
+  if (token.scope && !hasClassroomReadScopes(token.scope)) {
     throw new OAuthError("invalid_grant", {
       description: "Classroom read permissions were revoked. Reconnect.",
     });
