@@ -1,0 +1,16 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "classroom-mcp",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "workers_dev": true,
+  "preview_urls": false,
+  "vars": {
+    "PUBLIC_URL": "https://classroom-mcp.ibimugen.workers.dev",
+  },
+  "kv_namespaces": [
+    { "binding": "OAUTH_KV", "id": "50886f599f7d48398a628e13f564600c" },
+  ],
+  "observability": { "enabled": false },
+}
