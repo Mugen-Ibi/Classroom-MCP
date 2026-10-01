@@ -300,4 +300,31 @@ describe("Worker OAuth and MCP in workerd", () => {
     expect(token.refresh_token).not.toBe(refreshToken);
     expect(JSON.stringify(token)).not.toContain("google-refresh");
   });
+
+  it("recovers a transient Classroom 503 during an authenticated MCP call", async () => {
+    const response = await send("/mcp", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${mcpToken}`,
+        "Content-Type": "application/json",
+        Accept: "application/json, text/event-stream",
+        "MCP-Protocol-Version": "2025-06-18",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 4,
+        method: "tools/call",
+        params: {
+          name: "list_courses",
+          arguments: { pageToken: "transient-fixture" },
+        },
+      }),
+    });
+    expect(response.status).toBe(200);
+    const result = await rpc(response as unknown as Response);
+    expect(result.result.isError).not.toBe(true);
+    expect(JSON.parse(result.result.content[0].text).courses[0].name).toBe(
+      "Math",
+    );
+  });
 });

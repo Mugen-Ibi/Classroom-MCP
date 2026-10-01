@@ -1,4 +1,5 @@
 // Integration fixture: no real Google credentials or network requests.
+let transientFailures = 0;
 export default {
   async fetch(request) {
     const url = new URL(request.url);
@@ -25,8 +26,14 @@ export default {
       url.hostname === "classroom.googleapis.com" &&
       url.pathname === "/v1/courses" &&
       url.searchParams.get("studentId") === "me"
-    )
+    ) {
+      if (
+        url.searchParams.get("pageToken") === "transient-fixture" &&
+        transientFailures++ === 0
+      )
+        return new Response("Temporary test failure", { status: 503 });
       return Response.json({ courses: [{ id: "c1", name: "Math" }] });
+    }
     return new Response("Unexpected test upstream", { status: 500 });
   },
 };
