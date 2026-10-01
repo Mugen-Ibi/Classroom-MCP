@@ -15,8 +15,16 @@ type DueAssignment = Assignment & {
 };
 
 const TIME_BUDGET_MS = 45_000;
+// Stay below Workers Free's 50 external subrequests, leaving room for middleware.
+const REQUEST_BUDGET = 45;
 const TIME_BUDGET_MESSAGE =
   "Classroom time budget reached. Specify a courseId or narrow the date range and retry.";
+// Aggregate reads keep descriptions and attachment references, but omit grading/history metadata.
+const COURSE_FIELDS = "nextPageToken,courses(id,name)";
+const WORK_FIELDS =
+  "nextPageToken,courseWork(id,courseId,title,description,dueDate,dueTime,alternateLink,workType,materials)";
+const SUBMISSION_FIELDS =
+  "nextPageToken,studentSubmissions(id,courseId,courseWorkId,userId,state,late,alternateLink,assignmentSubmission,shortAnswerSubmission,multipleChoiceSubmission)";
 
 function retryAfterMs(value: string | null): number {
   if (!value) return 0;
@@ -67,16 +75,42 @@ export function validateRange(after?: string, before?: string): void {
 }
 
 export class ClassroomClient {
-  private remainingRequests = 100;
+  private remainingRequests = REQUEST_BUDGET;
   private readonly deadline = Date.now() + TIME_BUDGET_MS;
 
-  constructor(private readonly accessToken: string) {}
+  constructor(
+    private readonly accessToken: string,
+    private readonly signal?: AbortSignal,
+  ) {}
+
+  private checkCancelled(): void {
+    if (this.signal?.aborted)
+      throw new ClassroomError("Classroom request was cancelled.");
+  }
+
+  private async wait(delay: number): Promise<void> {
+    this.checkCancelled();
+    await new Promise<void>((resolve, reject) => {
+      const cleanup = () => this.signal?.removeEventListener("abort", abort);
+      const timer = setTimeout(() => {
+        cleanup();
+        resolve();
+      }, delay);
+      const abort = () => {
+        clearTimeout(timer);
+        cleanup();
+        reject(new ClassroomError("Classroom request was cancelled."));
+      };
+      this.signal?.addEventListener("abort", abort, { once: true });
+    });
+  }
 
   private async get<T>(path: string, query: Query = {}): Promise<T> {
     const url = new URL(`https://classroom.googleapis.com/v1/${path}`);
     for (const [key, value] of Object.entries(query))
       if (value !== undefined) url.searchParams.set(key, String(value));
     for (let attempt = 0; attempt < 3; attempt++) {
+      this.checkCancelled();
       const remainingTime = this.deadline - Date.now();
       if (remainingTime <= 0) throw new ClassroomError(TIME_BUDGET_MESSAGE);
       // Retries consume the same request budget as initial attempts.
@@ -86,13 +120,17 @@ export class ClassroomClient {
         );
       let response: Response | undefined;
       try {
+        const timeout = AbortSignal.timeout(Math.min(15_000, remainingTime));
         response = await fetch(url, {
           headers: { Authorization: `Bearer ${this.accessToken}` },
-          signal: AbortSignal.timeout(Math.min(15_000, remainingTime)),
+          signal: this.signal
+            ? AbortSignal.any([timeout, this.signal])
+            : timeout,
         });
         // Await body consumption inside the retry boundary: it can time out too.
         if (response.ok) return (await response.json()) as T;
       } catch {
+        this.checkCancelled();
         response = undefined;
       }
       const messages: Record<number, string> = {
@@ -119,7 +157,7 @@ export class ClassroomClient {
       );
       if (Date.now() + delay >= this.deadline)
         throw new ClassroomError(TIME_BUDGET_MESSAGE);
-      await new Promise<void>((resolve) => setTimeout(resolve, delay));
+      await this.wait(delay);
     }
     throw new ClassroomError(TIME_BUDGET_MESSAGE);
   }
@@ -202,6 +240,7 @@ export class ClassroomClient {
 
   private async collect<T>(
     load: (pageToken?: string) => Promise<Page<T>>,
+    complete?: () => boolean,
   ): Promise<Page<T>> {
     const items: T[] = [];
     let pageToken: string | undefined;
@@ -215,6 +254,8 @@ export class ClassroomClient {
         return { items, nextPageToken: pageToken, warning: error.message };
       }
       items.push(...result.items);
+      // A continuation is irrelevant once all requested submission states are known.
+      if (complete?.()) return { items };
       pageToken = result.nextPageToken;
       if (!pageToken) break;
     }
@@ -236,8 +277,13 @@ export class ClassroomClient {
     const courses = input.courseId
       ? { items: [{ id: input.courseId, name: input.courseId } as Course] }
       : await this.collect<Course>(async (pageToken) => {
-          const result = await this.listCourses({ pageToken });
-          return { items: result.courses, nextPageToken: result.nextPageToken };
+          return this.page<Course>("courses", "courses", {
+            studentId: "me",
+            courseStates: "ACTIVE",
+            pageSize: 100,
+            pageToken,
+            fields: COURSE_FIELDS,
+          });
         });
     if ("warning" in courses && courses.warning)
       warnings.push(`Course listing: ${courses.warning}`);
@@ -252,14 +298,20 @@ export class ClassroomClient {
       const warnings: string[] = [];
       try {
         const works = await this.collect<Assignment>(async (pageToken) => {
-          const result = await this.listAssignments({
-            courseId: course.id,
-            pageToken,
-            dueAfter: after,
-            dueBefore: before,
-          });
+          const result = await this.page<Assignment>(
+            `courses/${encodeURIComponent(course.id)}/courseWork`,
+            "courseWork",
+            {
+              courseWorkStates: "PUBLISHED",
+              pageSize: 100,
+              pageToken,
+              fields: WORK_FIELDS,
+            },
+          );
           return {
-            items: result.assignments,
+            items: result.items.filter((work) =>
+              inDueRange(work, after, before),
+            ),
             nextPageToken: result.nextPageToken,
           };
         });
@@ -271,17 +323,29 @@ export class ClassroomClient {
           );
         if (!works.items.length) return { assignments, warnings };
         let submissions: Page<Submission> = { items: [] };
+        const missing = new Set(works.items.map((work) => work.id));
         try {
-          submissions = await this.collect<Submission>(async (pageToken) => {
-            const result = await this.listMySubmissions({
-              courseId: course.id,
-              pageToken,
-            });
-            return {
-              items: result.submissions,
-              nextPageToken: result.nextPageToken,
-            };
-          });
+          submissions = await this.collect<Submission>(
+            async (pageToken) => {
+              const result = await this.page<Submission>(
+                `courses/${encodeURIComponent(course.id)}/courseWork/-/studentSubmissions`,
+                "studentSubmissions",
+                {
+                  userId: "me",
+                  pageSize: 100,
+                  pageToken,
+                  fields: SUBMISSION_FIELDS,
+                },
+              );
+              return {
+                ...result,
+                items: result.items.filter((s) =>
+                  missing.delete(s.courseWorkId),
+                ),
+              };
+            },
+            () => missing.size === 0,
+          );
           if (submissions.warning)
             warnings.push(
               `Course ${course.id}: ${submissions.warning} Missing states are UNKNOWN.`,

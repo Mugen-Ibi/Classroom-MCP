@@ -56,7 +56,10 @@ function createProvider(env: Env) {
         }
         const hostname = new URL(bindings.PUBLIC_URL).hostname;
         return createMcpHandler(
-          () => createClassroomServer(new ClassroomClient(props.accessToken)),
+          () =>
+            createClassroomServer(
+              new ClassroomClient(props.accessToken, request.signal),
+            ),
           {
             route: "/mcp",
             allowedHostnames: [

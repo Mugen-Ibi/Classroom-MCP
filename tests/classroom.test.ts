@@ -378,7 +378,7 @@ describe("Classroom reads", () => {
     expect(mock).toHaveBeenCalledTimes(1);
   });
 
-  it("counts retry attempts toward the shared 100-request budget", async () => {
+  it("counts retry attempts toward the shared 45-request budget", async () => {
     useRetryClock();
     const mock = vi.fn(
       async () => new Response("private-token", { status: 503 }),
@@ -387,11 +387,156 @@ describe("Classroom reads", () => {
     const client = new ClassroomClient("secret");
     // Zero time between attempts lets the test isolate the request cap.
     vi.spyOn(Date, "now").mockReturnValue(Date.now());
-    for (let index = 0; index < 34; index++) {
+    for (let index = 0; index < 16; index++) {
       const assertion = expect(client.listCourses()).rejects.toThrow();
       await vi.runAllTimersAsync();
       await assertion;
     }
-    expect(mock).toHaveBeenCalledTimes(100);
+    expect(mock).toHaveBeenCalledTimes(45);
+  });
+
+  it("stops submission pagination once all target assignments are covered", async () => {
+    const mock = vi.fn(async (input: URL) => {
+      const url = new URL(input);
+      if (url.searchParams.has("pageToken"))
+        throw new Error("Unnecessary page must not be requested");
+      if (url.pathname === "/v1/courses")
+        return Response.json({ courses: [{ id: "c1", name: "Math" }] });
+      if (url.pathname.endsWith("studentSubmissions"))
+        return Response.json({
+          studentSubmissions: [
+            { id: "old", courseWorkId: "old", state: "TURNED_IN" },
+            { id: "s1", courseWorkId: "a", state: "CREATED" },
+            { id: "s2", courseWorkId: "b", state: "TURNED_IN" },
+          ],
+          nextPageToken: "unrelated-history",
+        });
+      return Response.json({ courseWork: [work("a"), work("b")] });
+    });
+    vi.stubGlobal("fetch", mock);
+    const actual = await new ClassroomClient("secret").listDueAssignments({
+      dueAfter: "2026-10-01T00:00:00Z",
+    });
+    expect(mock).toHaveBeenCalledTimes(3);
+    expect(actual.assignments.map((a) => a.id)).toEqual(["a"]);
+    expect(actual.incomplete).toBe(false);
+    const fields = mock.mock.calls.map(([input]) =>
+      input.searchParams.get("fields"),
+    );
+    expect(fields[0]).toBe("nextPageToken,courses(id,name)");
+    expect(fields[1]).toContain("description");
+    expect(fields[1]).toContain("materials");
+    expect(fields[2]).toContain("assignmentSubmission");
+    expect(fields[2]).not.toContain("submissionHistory");
+  });
+
+  it("still paginates for missing states, including completed assignments", async () => {
+    const tokens: Array<string | null> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: URL) => {
+        const url = new URL(input);
+        if (!url.pathname.endsWith("studentSubmissions"))
+          return Response.json({ courseWork: [work("a"), work("b")] });
+        tokens.push(url.searchParams.get("pageToken"));
+        return Response.json(
+          tokens.length === 1
+            ? {
+                studentSubmissions: [
+                  { id: "s1", courseWorkId: "a", state: "TURNED_IN" },
+                ],
+                nextPageToken: "page2",
+              }
+            : {
+                studentSubmissions: [
+                  { id: "s2", courseWorkId: "b", state: "RETURNED" },
+                ],
+                nextPageToken: "irrelevant-page3",
+              },
+        );
+      }),
+    );
+    const actual = await new ClassroomClient("secret").listDueAssignments({
+      courseId: "c1",
+      dueAfter: "2026-10-01T00:00:00Z",
+      pendingOnly: false,
+    });
+    expect(tokens).toEqual([null, "page2"]);
+    expect(actual.assignments.map((a) => a.submissionState)).toEqual([
+      "TURNED_IN",
+      "RETURNED",
+    ]);
+    expect(actual.incomplete).toBe(false);
+  });
+
+  it("keeps full resources in the individual tools", async () => {
+    const mock = vi.fn(async (input: URL) => {
+      const url = new URL(input);
+      expect(url.searchParams.has("fields")).toBe(false);
+      if (url.pathname === "/v1/courses")
+        return Response.json({
+          courses: [{ id: "c1", name: "Math", section: "A" }],
+        });
+      if (url.pathname.endsWith("studentSubmissions"))
+        return Response.json({
+          studentSubmissions: [
+            { id: "s", courseWorkId: "a", submissionHistory: ["history"] },
+          ],
+        });
+      if (url.pathname.endsWith("courseWork"))
+        return Response.json({
+          courseWork: [{ ...work("a"), maxPoints: 100 }],
+        });
+      return Response.json({ ...work("a"), maxPoints: 100 });
+    });
+    vi.stubGlobal("fetch", mock);
+    const client = new ClassroomClient("secret");
+    expect((await client.listCourses()).courses[0]?.section).toBe("A");
+    expect(
+      (await client.listAssignments({ courseId: "c1" })).assignments[0]
+        ?.maxPoints,
+    ).toBe(100);
+    expect((await client.getAssignment("c1", "a")).maxPoints).toBe(100);
+    expect(
+      (await client.listMySubmissions({ courseId: "c1" })).submissions[0]
+        ?.submissionHistory,
+    ).toEqual(["history"]);
+  });
+
+  it("cancels retry waits immediately without another upstream attempt", async () => {
+    useRetryClock();
+    const controller = new AbortController();
+    const mock = vi.fn(
+      async () => new Response("unavailable", { status: 503 }),
+    );
+    vi.stubGlobal("fetch", mock);
+    const assertion = expect(
+      new ClassroomClient("secret", controller.signal).listCourses(),
+    ).rejects.toThrow("cancelled");
+    await vi.advanceTimersByTimeAsync(0);
+    controller.abort();
+    await assertion;
+    await vi.runAllTimersAsync();
+    expect(mock).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes cancellation to in-flight fetches and does not retry them", async () => {
+    const controller = new AbortController();
+    const mock = vi.fn(async (_input: URL, init: RequestInit) => {
+      await new Promise<void>((_resolve, reject) => {
+        init.signal!.addEventListener(
+          "abort",
+          () => reject(new DOMException("aborted", "AbortError")),
+          { once: true },
+        );
+        controller.abort();
+      });
+      return Response.json({});
+    });
+    vi.stubGlobal("fetch", mock);
+    await expect(
+      new ClassroomClient("secret", controller.signal).listCourses(),
+    ).rejects.toThrow("cancelled");
+    expect(mock).toHaveBeenCalledTimes(1);
   });
 });

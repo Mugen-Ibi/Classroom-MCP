@@ -114,7 +114,7 @@ export function createClassroomServer(client: ClassroomClient): McpServer {
     "list_due_assignments",
     {
       description:
-        "Aggregate upcoming deadlines across active enrolled courses, or one course, with own submission states. Defaults to next 7 days and pendingOnly=true (excludes TURNED_IN/RETURNED). UNKNOWN is included but is not proof of non-submission. Check incomplete/warnings; partial results retain successful pages. At most 10 pages per collection, 100 API attempts including retries, and a 45-second time budget. Up to three courses are read concurrently. For incomplete results retry with a courseId. To include overdue items set dueAfter in the past.",
+        "Aggregate upcoming deadlines across active enrolled courses, or one course, with own submission states, descriptions, and attachment references. Grading/history metadata is omitted; use the individual tools for full resources. Defaults to next 7 days and pendingOnly=true (excludes TURNED_IN/RETURNED). UNKNOWN is included but is not proof of non-submission. Check incomplete/warnings; partial results retain successful pages. At most 10 pages per collection, 45 API attempts including retries, and a 45-second time budget. Up to three courses are read concurrently; submission pagination stops once target items are covered. For incomplete results retry with a courseId. To include overdue items set dueAfter in the past.",
       inputSchema: {
         courseId: id.optional(),
         ...range,

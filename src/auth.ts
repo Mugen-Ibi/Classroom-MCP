@@ -10,6 +10,38 @@ import type { Env } from "./types";
 
 export const MCP_SCOPE = "classroom:read";
 
+async function readConsentForm(request: Request): Promise<string | null> {
+  const limit = 8192;
+  if (
+    !request.headers
+      .get("Content-Type")
+      ?.startsWith("application/x-www-form-urlencoded") ||
+    Number(request.headers.get("Content-Length")) > limit
+  ) {
+    await request.body?.cancel();
+    return null;
+  }
+  if (!request.body) return "";
+  const reader = request.body.getReader();
+  const decoder = new TextDecoder();
+  let bytes = 0;
+  let text = "";
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) return text + decoder.decode();
+      bytes += value.byteLength;
+      if (bytes > limit) {
+        await reader.cancel();
+        return null;
+      }
+      text += decoder.decode(value, { stream: true });
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 export function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (char) => `&#${char.charCodeAt(0)};`);
 }
@@ -92,13 +124,8 @@ export const authHandler = {
               status: 403,
               headers: securityHeaders,
             });
-          const body = await request.text();
-          if (
-            body.length > 8192 ||
-            !request.headers
-              .get("Content-Type")
-              ?.startsWith("application/x-www-form-urlencoded")
-          )
+          const body = await readConsentForm(request);
+          if (body === null)
             return new Response("Invalid consent form", {
               status: 400,
               headers: securityHeaders,

@@ -327,4 +327,39 @@ describe("Worker OAuth and MCP in workerd", () => {
       "Math",
     );
   });
+
+  it("reads compact deadlines with attachment references and skips irrelevant submission history", async () => {
+    const response = await send("/mcp", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${mcpToken}`,
+        "Content-Type": "application/json",
+        Accept: "application/json, text/event-stream",
+        "MCP-Protocol-Version": "2025-06-18",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 5,
+        method: "tools/call",
+        params: {
+          name: "list_due_assignments",
+          arguments: { dueAfter: "2026-10-01T00:00:00Z" },
+        },
+      }),
+    });
+    expect(response.status).toBe(200);
+    const result = await rpc(response as unknown as Response);
+    const data = JSON.parse(result.result.content[0].text);
+    expect(data.incomplete).toBe(false);
+    expect(data.assignments).toHaveLength(1);
+    const task = data.assignments[0];
+    expect(task.courseName).toBe("Math");
+    expect(task.description).toBe("Submit slides");
+    expect(task.materials[0].link.url).toBe("https://example.com/material");
+    expect(
+      task.submission.assignmentSubmission.attachments[0].driveFile.title,
+    ).toBe("Slides.pdf");
+    expect(task).not.toHaveProperty("maxPoints");
+    expect(task.submission).not.toHaveProperty("submissionHistory");
+  });
 });
