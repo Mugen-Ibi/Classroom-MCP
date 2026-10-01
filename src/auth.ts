@@ -77,7 +77,9 @@ export const authHandler = {
           const details = await oauth.describeConsent(authRequest);
           const consent = await oauth.beginConsent(authRequest);
           consent.headers.set("Content-Type", "text/html; charset=utf-8");
-          consent.headers.set("Referrer-Policy", "no-referrer");
+          // no-referrer makes browsers send Origin: null on this form POST.
+          // Send only the origin, keeping OAuth query parameters out of Referer.
+          consent.headers.set("Referrer-Policy", "origin");
           consent.headers.set("X-Content-Type-Options", "nosniff");
           return new Response(consentPage(details, consent.handle), {
             headers: consent.headers,

@@ -125,6 +125,7 @@ describe("Worker OAuth and MCP in workerd", () => {
     const consent = await send(`/authorize?${params}`);
     expect(consent.status).toBe(200);
     expect(consent.headers.get("X-Frame-Options")).toBe("DENY");
+    expect(consent.headers.get("Referrer-Policy")).toBe("origin");
     remember(consent as unknown as Response);
     const handle = (await consent.text()).match(
       /name="handle" value="([^"]+)"/,
@@ -133,6 +134,21 @@ describe("Worker OAuth and MCP in workerd", () => {
       handle,
       decision: "approve",
     }).toString();
+    // A consent cookie must not make missing, opaque, or foreign origins valid.
+    for (const requestOrigin of [undefined, "null", "https://evil.test"]) {
+      const headers = new Headers({
+        "Content-Type": "application/x-www-form-urlencoded",
+        Cookie: cookieHeader(),
+      });
+      if (requestOrigin) headers.set("Origin", requestOrigin);
+      const rejected = await send("/authorize", {
+        method: "POST",
+        headers,
+        body: form,
+      });
+      expect(rejected.status).toBe(403);
+      expect(await rejected.text()).toMatch(/invalid origin/i);
+    }
     const noCookie = await send("/authorize", {
       method: "POST",
       headers: {
@@ -152,6 +168,7 @@ describe("Worker OAuth and MCP in workerd", () => {
       body: form,
     });
     expect(approved.status).toBe(302);
+    expect(approved.headers.get("Referrer-Policy")).toBe("no-referrer");
     remember(approved as unknown as Response);
     const googleUrl = new URL(approved.headers.get("Location")!);
     expect(googleUrl.hostname).toBe("accounts.google.com");
