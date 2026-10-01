@@ -1,5 +1,9 @@
 # Google Classroom Readonly MCP
 
+<img src="public/icon-128.png" width="80" height="80" alt="Classroom MCP">
+
+アイコンは[MCP用128px](https://classroom-mcp.ibimugen.workers.dev/icon-128.png)・[512px](https://classroom-mcp.ibimugen.workers.dev/icon-512.png)を公開し、MCPメタデータ、ホームページ、OAuth同意画面に設定しています。生成プロンプトと元画像は`design/`に保存しています。
+
 Google Classroomの授業・公開済み課題・自分の提出状況を、ChatGPTなどのMCPクライアントから読み取るCloudflare Workerです。Googleログイン、MCP OAuth認可、Googleトークンの更新に対応しています。
 
 ```text

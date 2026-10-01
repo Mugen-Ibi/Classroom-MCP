@@ -59,6 +59,7 @@ function createProvider(env: Env) {
           () =>
             createClassroomServer(
               new ClassroomClient(props.accessToken, request.signal),
+              bindings.PUBLIC_URL,
             ),
           {
             route: "/mcp",

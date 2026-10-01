@@ -210,6 +210,27 @@ describe("Worker OAuth and MCP in workerd", () => {
       Accept: "application/json, text/event-stream",
       "MCP-Protocol-Version": "2025-06-18",
     };
+    const initialized = await send("/mcp", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 0,
+        method: "initialize",
+        params: {
+          protocolVersion: "2025-06-18",
+          capabilities: {},
+          clientInfo: { name: "test-client", version: "1.0.0" },
+        },
+      }),
+    });
+    const info = (await rpc(initialized as unknown as Response)).result
+      .serverInfo;
+    expect(info.icons[0]).toEqual({
+      src: `${origin}/icon-128.png`,
+      mimeType: "image/png",
+      sizes: ["128x128"],
+    });
     const listed = await send("/mcp", {
       method: "POST",
       headers,

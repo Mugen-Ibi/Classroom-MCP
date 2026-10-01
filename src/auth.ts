@@ -50,7 +50,8 @@ export function consentPage(
   details: ConsentDescription,
   handle: string,
 ): string {
-  return `<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Classroom MCP 接続の許可</title></head><body>
+  return `<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><link rel="icon" type="image/png" href="/favicon.png"><title>Classroom MCP 接続の許可</title></head><body>
+<img src="/icon-128.png" width="64" height="64" alt="Classroom MCP">
 <h1>Google Classroomへの接続を許可</h1>
 <p>クライアント: <strong>${escapeHtml(details.clientName)}</strong></p>
 <p>${details.clientDomain ? `登録元: ${escapeHtml(details.clientDomain)}` : "このクライアント名は自己申告です。接続を開始したアプリか確認してください。"}</p>
@@ -87,8 +88,13 @@ export const authHandler = {
     }
     if (url.pathname === "/" && request.method === "GET") {
       return new Response(
-        "Google Classroom Readonly MCP\nMCP endpoint: /mcp\nConnect with an OAuth-capable MCP client.\n",
-        { headers: securityHeaders },
+        '<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><link rel="icon" type="image/png" href="/favicon.png"><title>Classroom MCP</title></head><body><img src="/icon-128.png" width="96" height="96" alt="Classroom MCP"><h1>Google Classroom Readonly MCP</h1><p>授業・課題・自分の提出状況を読み取るMCPサーバーです。</p><p>MCP接続先: <code>/mcp</code></p><p>OAuth対応のMCPクライアントから接続してください。</p></body></html>',
+        {
+          headers: {
+            ...securityHeaders,
+            "Content-Type": "text/html; charset=utf-8",
+          },
+        },
       );
     }
     if (!["/authorize", "/callback"].includes(url.pathname))

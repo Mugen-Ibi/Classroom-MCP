@@ -3,6 +3,7 @@
   "name": "classroom-mcp",
   "main": "src/index.ts",
   "minify": true,
+  "assets": { "directory": "./public" },
   "compatibility_date": "2026-10-01",
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
   "workers_dev": true,
