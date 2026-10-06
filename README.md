@@ -2,7 +2,13 @@
 
 <img src="public/icon-128.png" width="80" height="80" alt="Classroom MCP">
 
-アイコンは[MCP用128px](https://classroom-mcp.ibimugen.workers.dev/icon-128.png)・[512px](https://classroom-mcp.ibimugen.workers.dev/icon-512.png)を公開し、MCPメタデータ、ホームページ、OAuth同意画面に設定しています。生成プロンプトと元画像は`design/`に保存しています。
+このリポジトリを自分のCloudflareアカウントへデプロイし、自分のGoogleアカウントで使うためのプロジェクトです。共有サービスの接続先は提供しません。Googleの公式製品ではありません。
+
+**初めて使う方は[個人デプロイガイド](docs/personal-deployment.md)を参照してください。** ソースの取得からGoogle OAuth設定、ChatGPTへの接続まで順番に説明しています。
+
+必要なものは、Cloudflareアカウント、Google Cloudプロジェクトを作成できるアカウント、学生としてClassroomに所属するGoogleアカウント、Node.js 24以上、Git、OAuthとStreamable HTTPに対応したMCPクライアントです。学校アカウントには管理者の許可が必要になる場合があります。ChatGPTのカスタムMCP接続の利用可否はプランと管理設定に依存します。
+
+Google OAuthをExternal / Testingで使う場合、この構成の更新トークンは7日で期限切れになります。個人デプロイでも再接続が必要です。Cloudflare・Googleの無料枠や料金、利用制限は各自のアカウントで確認してください。
 
 Google Classroomの授業・公開済み課題・自分の提出状況を、ChatGPTなどのMCPクライアントから読み取るCloudflare Workerです。Googleログイン、MCP OAuth認可、Googleトークンの更新に対応しています。
 
@@ -108,29 +114,15 @@ UNIPAの所有者確認は、資格情報の使用と通知KVの読み取りよ�
 
 実装と合成データによるWorker検証は完了しています。**Cloudflareの実送信元から本人のSecretsでログイン・取得できるか、CPU制限内で完了するか、通常のUNIPA利用に影響しないかは未検証です。** 最初の1回で、全件数の照合と既読状態が変わらないことを確認してください。[実装の詳細](docs/UNIPA_IMPLEMENTATION.md)を参照してください。
 
-## このリポジトリのデプロイ先
+## 導入と運用
 
-既存のCloudflare Workers Builds接続に合わせています。
+[個人デプロイガイド](docs/personal-deployment.md)に、初回デプロイ、Forkの更新、GitHubからの自動デプロイ、利用停止の手順をまとめています。以下は設定項目のリファレンスです。
 
-| 項目                 | 設定                                                  |
-| -------------------- | ----------------------------------------------------- |
-| GitHub               | `Mugen-Ibi/Classroom-MCP`                             |
-| 本番ブランチ         | `main`                                                |
-| Worker名             | `classroom-mcp`                                       |
-| ルートディレクトリ   | `/`                                                   |
-| ビルドコマンド       | `npm run check`                                       |
-| デプロイコマンド     | `npx wrangler deploy`                                 |
-| ビルド環境変数       | `NODE_VERSION=24`                                     |
-| MCP URL              | `https://classroom-mcp.ibimugen.workers.dev/mcp`      |
-| Googleのコールバック | `https://classroom-mcp.ibimugen.workers.dev/callback` |
+リポジトリ内の`wrangler.jsonc`には作者の運用設定が残っています。個人デプロイでは、`name`、`PUBLIC_URL`、`OAUTH_KV`のIDを必ず自分の環境に合わせて変更してください。
 
-Workers Buildsが依存をインストールしてからチェックとデプロイを実行します。GitHub ActionsもPRとmainへのpushで同じチェックを実行します。デプロイはWorkers Buildsに任せるため、GitHub側のCloudflare APIトークンは不要です。GitHub Actionsの結果とWorkers Buildsは別系統なので、デプロイ前の検証はWorkers Buildsのビルドコマンドにも設定します。
+## Google Cloudの設定項目
 
-認証用KV `classroom-mcp-oauth`は作成済みで、`wrangler.jsonc`の`OAUTH_KV`にIDを設定しています。別アカウントでは`npx wrangler kv namespace create OAUTH_KV`で作成し、表示されたIDへ置き換えてください。
-
-`wrangler.jsonc`のWorker名はCloudflare上の名前と一致させます。別アカウントに導入する場合は`PUBLIC_URL`、KVのID、GoogleのコールバックURLも変更してください。
-
-## 初回設定：Google Cloud
+以下のURLの`your-subdomain`は例示です。実際にデプロイしたWorkerのURLに置き換えてください。
 
 1. [Google Cloud Console](https://console.cloud.google.com/)でプロジェクトを作成、または選択します。
 2. **APIとサービス → ライブラリ**で**Google Classroom API**を有効にします。
@@ -145,7 +137,7 @@ Workers Buildsが依存をインストールしてからチェックとデプロ
 7. **承認済みのリダイレクトURI**に、次を完全一致で登録します。
 
    ```text
-   https://classroom-mcp.ibimugen.workers.dev/callback
+   https://classroom-mcp.your-subdomain.workers.dev/callback
    ```
 
    ローカルでGoogleログインも試す場合は`http://localhost:8787/callback`も登録します。JavaScriptの承認済みオリジンはこのサーバー側OAuthフローには不要です。
@@ -156,7 +148,7 @@ Classroomの`classroom.coursework.me.readonly`は、自分の課題と提出状�
 
 ExternalかつTestingのGoogle OAuthでは、この構成の更新トークンは7日で期限切れになるため、定期的に再接続が必要です。継続運用する場合はGoogleの公開・審査要件を確認してください。学校の管理者が外部アプリへのアクセスを制限している場合は、管理者の許可が必要です。
 
-## 初回設定：CloudflareのSecrets
+## CloudflareのSecrets
 
 [Cloudflare Dashboard](https://dash.cloudflare.com/) → **Workers & Pages → classroom-mcp → Settings → Variables & Secrets**で、次の値を**Secret**として追加します。ビルド専用の変数ではなく、Workerの実行時Secretに設定してください。
 
@@ -183,9 +175,11 @@ GoogleのSecretsが未設定でもWorkerはデプロイ可能ですが、`/healt
 
 ## ChatGPTから接続
 
+以下のMCP URLは例示です。自分のWorker URLに置き換えてください。
+
 カスタムMCPアプリを使用できるChatGPTの設定画面で開発者モードを有効にし、以下でアプリを追加します。表示名・利用可否はプランやワークスペースの管理設定によって異なります。
 
-- MCP URL: `https://classroom-mcp.ibimugen.workers.dev/mcp`
+- MCP URL: `https://classroom-mcp.your-subdomain.workers.dev/mcp`
 - 認証: **OAuth**
 - クライアントの接続許可画面で返送先を確認 → Googleアカウントでログイン → Classroomの読み取り権限を許可
 
@@ -197,6 +191,16 @@ ChatGPT側のGoogle OAuthクライアントIDを作成する必要はありま�
 Classroomから今週締切の課題を取得して、日本時間で締切順に並べて。
 提出状況がUNKNOWNのものは、確認が必要な課題として区別して。
 ```
+
+## データと認証情報
+
+- GoogleのOAuthクライアントシークレットは、自分のWorkerの実行時Secretに保存します。
+- OAuthクライアント、認可状態、暗号化されたGoogle認証情報は、自分のCloudflare KVに保存します。
+- 授業・課題・提出状況の共有キャッシュは実装していません。読み取った結果は接続先のMCPクライアントへ返るため、そのサービスのデータ取り扱い設定も確認してください。
+- 添付資料はリンクを返すだけで、Driveファイルの本文を取得しません。
+- ローカルの`.dev.vars`や認証トークンをコミットしないでください。問い合わせにはSecret、OAuthコード、トークン、学生情報を含めず、エラー名と再現手順を添えてください。
+
+接続の取り消しとWorkerの削除は[個人デプロイガイド](docs/personal-deployment.md#利用停止と認証の取り消し)を参照してください。アイコンの元画像と生成プロンプトは[design/README.md](design/README.md)、設計と性能の検証記録は[REVIEW.md](REVIEW.md)にあります。
 
 ## ローカル開発と検証
 
