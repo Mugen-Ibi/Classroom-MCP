@@ -8,6 +8,12 @@
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
   "workers_dev": true,
   "preview_urls": false,
+  "observability": { "enabled": false },
+    "vars": {
+    "PUBLIC_URL": "https://classroom-mcp.ibimugen.workers.dev",
+    "UNIPA_PASSWORD": "REMOVED_CREDENTIAL",
+    "UNIPA_USER_ID": "REMOVED_CREDENTIAL"
+  },
   "vars": {
     "PUBLIC_URL": "https://classroom-mcp.ibimugen.workers.dev",
   },
@@ -16,5 +22,4 @@
     // Optional UNIPA: create your own namespace, then uncomment with its real ID.
     // { "binding": "UNIPA_SNAPSHOTS", "id": "YOUR_OWN_NAMESPACE_ID" },
   ],
-  "observability": { "enabled": false },
 }
