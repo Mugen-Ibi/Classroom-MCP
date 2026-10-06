@@ -57,9 +57,29 @@ beforeAll(async () => {
         },
         {
           name: "google-mock",
-          modules: true,
-          scriptPath: "tests/google-mock.js",
+          modules: [
+            { type: "ESModule", path: "tests/google-mock.js" },
+            { type: "ESModule", path: "tests/unipa-mock.js" },
+            { type: "ESModule", path: "tests/unipa-fixtures.js" },
+          ],
           compatibilityDate: "2026-10-01",
+        },
+        {
+          name: "unipa-enabled",
+          modules: true,
+          scriptPath: "dist/index.js",
+          compatibilityDate: "2026-10-01",
+          compatibilityFlags: ["nodejs_compat", "global_fetch_strictly_public"],
+          kvNamespaces: ["OAUTH_KV", "UNIPA_SNAPSHOTS"],
+          bindings: {
+            PUBLIC_URL: origin,
+            GOOGLE_CLIENT_ID: "test-client",
+            GOOGLE_CLIENT_SECRET: "test-secret",
+            ALLOWED_EMAILS: "student@example.com",
+            UNIPA_USER_ID: "synthetic-student-id",
+            UNIPA_PASSWORD: "synthetic-password",
+          },
+          outboundService: "google-mock",
         },
         {
           name: "unconfigured",
@@ -382,5 +402,150 @@ describe("Worker OAuth and MCP in workerd", () => {
     ).toBe("Slides.pdf");
     expect(task).not.toHaveProperty("maxPoints");
     expect(task.submission).not.toHaveProperty("submissionHistory");
+  });
+  it("adds three optional UNIPA tools and collects notices over HTTP/JSF in workerd", async () => {
+    const worker = await mf.getWorker("unipa-enabled");
+    let unipaToken = mcpToken;
+    const sendUnipa = (path: string, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      headers.set("Host", new URL(origin).host);
+      return worker.fetch(`${origin}${path}`, {
+        ...init,
+        headers,
+        redirect: "manual",
+      });
+    };
+    const call = async (method: string, params: object) => {
+      const response = await worker.fetch(`${origin}/mcp`, {
+        method: "POST",
+        headers: {
+          Host: new URL(origin).host,
+          Authorization: `Bearer ${unipaToken}`,
+          "Content-Type": "application/json",
+          Accept: "application/json, text/event-stream",
+          "MCP-Protocol-Version": "2025-06-18",
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 70, method, params }),
+      });
+      expect(response.status).toBe(200);
+      return (await rpc(response as unknown as Response)).result;
+    };
+    // Existing Classroom-only grants do not acquire campus-notice access silently.
+    expect((await call("tools/list", {})).tools).toHaveLength(5);
+    const query = new URLSearchParams({
+      client_id: clientId,
+      redirect_uri: "http://localhost:3000/callback",
+      response_type: "code",
+      code_challenge: await s256(verifier),
+      code_challenge_method: "S256",
+      resource: `${origin}/mcp`,
+      scope: "classroom:read offline_access",
+    });
+    const consent = await sendUnipa(`/authorize?${query}`);
+    remember(consent as unknown as Response);
+    const consentBody = await consent.text();
+    expect(consentBody).toContain("unipa:read");
+    expect(consentBody).toContain("最大24時間");
+    const handle = consentBody.match(/name="handle" value="([^"]+)"/)![1]!;
+    const approval = await sendUnipa("/authorize", {
+      method: "POST",
+      headers: {
+        Origin: origin,
+        "Content-Type": "application/x-www-form-urlencoded",
+        Cookie: cookieHeader(),
+      },
+      body: new URLSearchParams({ handle, decision: "approve" }).toString(),
+    });
+    remember(approval as unknown as Response);
+    const google = new URL(approval.headers.get("Location")!);
+    const callback = await sendUnipa(
+      `/callback?state=${google.searchParams.get("state")}&code=google-code`,
+      { headers: { Cookie: cookieHeader() } },
+    );
+    const code = new URL(callback.headers.get("Location")!).searchParams.get(
+      "code",
+    )!;
+    const exchange = await sendUnipa("/oauth/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "authorization_code",
+        client_id: clientId,
+        code,
+        code_verifier: verifier,
+        redirect_uri: "http://localhost:3000/callback",
+        resource: `${origin}/mcp`,
+      }).toString(),
+    });
+    expect(exchange.status).toBe(200);
+    const issued = await exchange.json();
+    expect(issued.scope).toContain("unipa:read");
+    unipaToken = issued.access_token;
+    const tools = await call("tools/list", {});
+    expect(tools.tools).toHaveLength(8);
+    expect(
+      tools.tools.every(
+        (t: { annotations: { readOnlyHint: boolean } }) =>
+          t.annotations.readOnlyHint,
+      ),
+    ).toBe(true);
+    const before = await call("tools/call", {
+      name: "unipa_connection_status",
+      arguments: {},
+    });
+    expect(JSON.parse(before.content[0].text).lastSuccessAt).toBe(null);
+    const result = await call("tools/call", {
+      name: "unipa_list_announcements",
+      arguments: { limit: 20 },
+    });
+    const trace = await (
+      await (
+        await mf.getWorker("google-mock")
+      ).fetch(`${origin}/__unipa_test_trace`)
+    ).json();
+    expect(
+      result.isError,
+      `${result.content[0].text} steps=${JSON.stringify(trace)}`,
+    ).not.toBe(true);
+    const data = JSON.parse(result.content[0].text);
+    expect(data.totalCount).toBe(38);
+    expect(data.notices).toHaveLength(20);
+    expect(data.nextOffset).toBe(20);
+    expect(data.stale).toBe(false);
+    expect(trace).toHaveLength(5);
+    const rest = await call("tools/call", {
+      name: "unipa_list_announcements",
+      arguments: { offset: 20, limit: 20 },
+    });
+    const last = JSON.parse(rest.content[0].text);
+    expect(last.notices).toHaveLength(18);
+    expect(last.nextOffset).toBe(null);
+    expect(
+      new Set([...data.notices, ...last.notices].map((n) => n.id)).size,
+    ).toBe(38);
+    const changes = await call("tools/call", {
+      name: "unipa_list_schedule_changes",
+      arguments: {},
+    });
+    expect(JSON.parse(changes.content[0].text).changes).toHaveLength(2);
+    const ownCache = await mf.getKVNamespace(
+      "UNIPA_SNAPSHOTS",
+      "unipa-enabled",
+    );
+    const keys = await ownCache.list();
+    const stored = JSON.stringify(
+      await Promise.all(keys.keys.map((k) => ownCache.get(k.name))),
+    );
+    for (const secret of [
+      "synthetic-student-id",
+      "synthetic-password",
+      "synthetic-auth",
+      "synthetic-rx",
+      "synthetic-tab-state",
+      "google-access",
+    ]) {
+      expect(JSON.stringify(result)).not.toContain(secret);
+      expect(stored).not.toContain(secret);
+    }
   });
 });

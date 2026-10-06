@@ -8,6 +8,8 @@ import { authHandler, MCP_SCOPE } from "./auth";
 import { ClassroomClient } from "./classroom";
 import { emailAllowed, refreshGoogleGrant } from "./google";
 import { createClassroomServer } from "./mcp";
+import { UNIPA_SCOPE, unipaEnabled } from "./unipa/config";
+import { UnipaService } from "./unipa/snapshot";
 import type { Env, GoogleAccess, GoogleGrant } from "./types";
 
 export async function exchangeMcpToken(
@@ -60,6 +62,13 @@ function createProvider(env: Env) {
             createClassroomServer(
               new ClassroomClient(props.accessToken, request.signal),
               bindings.PUBLIC_URL,
+              unipaEnabled(bindings) && ctx.auth.scope.includes(UNIPA_SCOPE)
+                ? new UnipaService(
+                    bindings,
+                    { userId: props.userId, email: props.email },
+                    request.signal,
+                  )
+                : undefined,
             ),
           {
             route: "/mcp",
@@ -85,7 +94,11 @@ function createProvider(env: Env) {
     tokenEndpoint: "/oauth/token",
     clientRegistrationEndpoint: "/oauth/register",
     clientIdMetadataDocumentEnabled: true,
-    scopesSupported: [MCP_SCOPE, "offline_access"],
+    scopesSupported: [
+      MCP_SCOPE,
+      ...(unipaEnabled(env) ? [UNIPA_SCOPE] : []),
+      "offline_access",
+    ],
     requiredScopes: [MCP_SCOPE],
     resourceMetadata: {
       resource: `${env.PUBLIC_URL}/mcp`,

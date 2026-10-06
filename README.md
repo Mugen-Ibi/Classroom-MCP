@@ -6,14 +6,19 @@
 
 Google Classroomの授業・公開済み課題・自分の提出状況を、ChatGPTなどのMCPクライアントから読み取るCloudflare Workerです。Googleログイン、MCP OAuth認可、Googleトークンの更新に対応しています。
 
+本学（iU）の学生は、各自のWorkerへUNIPA通知の読み取りを追加できます。Classroomは課題・資料、UNIPAは休講・教室変更の候補と大学のお知らせを担当します。出席登録・出席情報の収集は実装していません。
+
 ```text
 ChatGPT / MCPクライアント
   → MCP OAuth（クライアントごとの接続許可）
   → Cloudflare Workers /mcp（Streamable HTTP）
   → Google OAuth → Google Classroom API（読み取り専用）
+  → 本人確認・UNIPA Secrets → 通常Web/JSF → 掲示一覧（任意）
 ```
 
 SDK v2のstateless MCPを使います。Durable Objectsは不要です。認証情報はWorkers OAuth ProviderがKV内に暗号化して保存します。課題の作成・提出・編集は実装していません。各接続はログインした本人のGoogleアカウントを使います。
+
+UNIPAのHTTP・認証・キャッシュは`src/unipa/`、ツール登録は`src/tools/unipa.ts`へ分離しています。同じMCPを使い、学生が管理する接続・デプロイを1組に保ちます。UNIPA専用MCPが必要になった場合も、このモジュールを別の認証入口へ接続できます。初期構成にAggregatorやブラウザ実行基盤は追加していません。
 
 ## MCPツール
 
@@ -36,6 +41,72 @@ Classroomへの読み取りは、通信失敗・タイムアウト・HTTP 408/42
 添付資料のURLは返しますが、Driveファイルの本文は読み取りません。本文の解析には別途Google Drive連携を使用してください。
 
 締切の集約ではGoogle APIの`fields`で転送項目を限定します。課題の説明、締切、教材・提出ファイルへの参照は保持し、採点・変更履歴などのメタデータは省略します。対象課題すべての提出状態が揃った時点で、提出一覧の後続ページを読みません。個別ツールは従来どおり完全なリソースを返します。MCPリクエストのキャンセルはGoogleへの取得とリトライ待機にも伝播します。本番のWorkerコードはWranglerでminifyします。
+
+## UNIPA通知を追加する
+
+**各学生が自分のCloudflareへデプロイし、本人のUNIPAアカウント1組を設定する方式です。** 1つのWorkerを複数学生で共有する用途には対応していません。両方のUNIPA Secretsが未設定ならClassroomの5ツールだけを提供します。
+
+UNIPAを設定し、接続時に追加権限`unipa:read`へ同意すると、次の3ツールを提供します。Googleに求めるOAuth権限は変更しません。既存のClassroom接続にはUNIPA権限を自動追加しないため、設定後はMCPアプリを再接続してください。
+
+| ツール                        | 内容                                                                 |
+| ----------------------------- | -------------------------------------------------------------------- |
+| `unipa_list_announcements`    | 全表示の掲示一覧。件名・カテゴリ・差出人・掲示日・未読状態・重要表示 |
+| `unipa_list_schedule_changes` | 件名に休講・教室変更を含む候補。本文由来の詳細は未確認               |
+| `unipa_connection_status`     | 設定・最終成功日時・鮮度・停止理由。ログインは行わない               |
+
+掲示本文へのアクセスは既読状態を変えることが確認されたため、本文・詳細・添付の取得は行いません。既読更新、回答、出席操作も実装していません。休講・教室変更は候補として返し、授業名・対象日・時限・変更先教室は`null`です。`postedDate`は掲示日であり、授業の対象日ではありません。候補が0件でも変更なしとは断定せず、[公式UNIPA](https://unipa.i-u.ac.jp/uprx/)で確認してください。
+
+### 本人のWorkerへ設定
+
+1. このREADMEのGoogle設定と学生自身のデプロイ先設定を済ませます。
+2. 本人の通知専用KVを作ります。既存OAuthのKVとは分けます。
+
+   ```bash
+   npx wrangler kv namespace create UNIPA_SNAPSHOTS
+   ```
+
+   表示されたIDで、`wrangler.jsonc`の`kv_namespaces`に次を追加してください。既存の`OAUTH_KV`も残します。KVの実IDは各自が作成したものを使います。
+
+   ```json
+   { "binding": "UNIPA_SNAPSHOTS", "id": "YOUR_OWN_NAMESPACE_ID" }
+   ```
+
+3. 本人のWorkerの実行時Secretsへ設定します。ID／パスワードを`vars`、Git、チャットへ書く必要はありません。
+
+   | Secret           | 設定する内容                                   |
+   | ---------------- | ---------------------------------------------- |
+   | `UNIPA_USER_ID`  | 本人のUNIPAログインID                          |
+   | `UNIPA_PASSWORD` | 本人のUNIPAパスワード                          |
+   | `ALLOWED_EMAILS` | MCPに接続する本人のGoogleメールアドレス1件だけ |
+
+   Dashboardの **Workers & Pages → 本人のWorker → Settings → Variables and Secrets** からSecretとして入力するか、以下を実行して対話入力します。
+
+   ```bash
+   npx wrangler secret put UNIPA_USER_ID
+   npx wrangler secret put UNIPA_PASSWORD
+   npx wrangler secret put ALLOWED_EMAILS
+   ```
+
+4. 設定を含むWorkerをデプロイした後、MCPアプリを再接続し、UNIPA通知の追加読み取り権限を確認して許可します。
+5. `unipa_connection_status`で設定状態を確認し、`unipa_list_announcements`で1回取得します。`complete: true`、件数、鮮度を公式の「全表示」と照合してください。
+
+UNIPAの所有者確認は、資格情報の使用と通知KVの読み取りより先に行います。`ALLOWED_EMAILS`が空・複数・本人と不一致、片方だけのSecret、KV未設定の場合はUNIPAへのログインを行いません。Classroomの機能とは独立した設定エラーを返します。
+
+### 取得・保存・停止
+
+本学では調査した内部API入口がWEB-APIライセンス拒否だったため、固定した本学UNIPAのHTTPS originに対する通常WebログインとJSF一覧取得を使用します。応答のスクリプトは実行しません。Cookie jarは取得処理中のメモリーだけに置き、Cookie・rx系状態・ViewStateをKVやMCP結果へ保存しません。資格情報、本文、通信ログ、実ページのHTML/XMLをログへ出しません。
+
+一覧は15分のキャッシュを使い、成功した通知データだけを専用KVへ最大24時間保存します。取得失敗時は前回の成功結果を`stale: true`と理由コード付きで返すか、キャッシュがなければエラーを返します。取得失敗を「通知0件」として保存しません。各ページの`nextOffset`が`null`になるまで同じフィルターで続きを取得してください。
+
+認証拒否・MFA/CAPTCHAは自動再試行を停止します。本人が公式画面で通常ログインを確認し、必要ならSecretsを修正した後、**`UNIPA_AUTH_REVISION`を前回と異なる値（例：`2`）へ変更**すると再開できます。この値は非機密の実行時変数で、既定は`1`です。資格情報を含めず、英数字・`_`・`-`の1～64文字にしてください。認証失敗を繰り返す目的で変更しないでください。
+
+通信失敗・セッション失効・画面変更は最低5分、429/503は`Retry-After`以上の間隔を設け、次の利用者要求時に更新します。失ったJSF POSTを同じ状態で再送せず、1つの取得処理内で再ログインもしません。取得は最大30リクエスト・120秒・1リクエスト15秒・応答4MB・掲示1000件までです。常時巡回とCronはありません。
+
+同じisolate内の同時取得をまとめ、KVに短い更新中状態を保存します。ただし[KVは結果整合性のため厳密な分散ロックには使えません](https://developers.cloudflare.com/kv/concepts/how-kv-works/)。異なるisolateの同時ログインを完全には防ぎません。最初の実機検証は呼び出しを直列にし、同時利用が通常ログインに影響する場合はDurable Objectによる直列化を検討します。
+
+大学のお知らせは学内向けの情報です。Cloudflareでの保存とMCPクライアントへの提供について、大学・提供元の利用条件に従ってください。公開fixtureはすべて合成データで、私的なブラウザ検証資料はGitから除外しています。
+
+実装と合成データによるWorker検証は完了しています。**Cloudflareの実送信元から本人のSecretsでログイン・取得できるか、CPU制限内で完了するか、通常のUNIPA利用に影響しないかは未検証です。** 最初の1回で、全件数の照合と既読状態が変わらないことを確認してください。[実装の詳細](docs/UNIPA_IMPLEMENTATION.md)を参照してください。
 
 ## このリポジトリのデプロイ先
 

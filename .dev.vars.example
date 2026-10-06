@@ -4,3 +4,10 @@ GOOGLE_CLIENT_ID="replace-with-google-web-client-id"
 GOOGLE_CLIENT_SECRET="replace-with-google-client-secret"
 # Optional: restrict who can authorize this MCP (comma-separated exact emails).
 ALLOWED_EMAILS=""
+# Optional UNIPA for this student's own deployment only.
+# When enabled, ALLOWED_EMAILS must contain exactly one owner email;
+# bind the separate UNIPA_SNAPSHOTS KV namespace in wrangler.jsonc.
+UNIPA_USER_ID=""
+UNIPA_PASSWORD=""
+# Change only after personally checking a stopped login and correcting Secrets.
+UNIPA_AUTH_REVISION="1"

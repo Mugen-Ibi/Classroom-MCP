@@ -1,4 +1,5 @@
 // Integration fixture: no real Google credentials or network requests.
+import { mockUnipa, unipaRequestTrace } from "./unipa-mock.js";
 let transientFailures = 0;
 function project(data, fields) {
   if (!fields) return data;
@@ -20,6 +21,9 @@ function project(data, fields) {
 export default {
   async fetch(request) {
     const url = new URL(request.url);
+    if (url.pathname === "/__unipa_test_trace")
+      return Response.json(unipaRequestTrace);
+    if (url.hostname === "unipa.i-u.ac.jp") return mockUnipa(request);
     if (url.hostname === "oauth2.googleapis.com") {
       const form = new URLSearchParams(await request.text());
       return Response.json({

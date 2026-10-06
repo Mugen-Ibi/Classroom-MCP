@@ -1,12 +1,12 @@
 import type { OAuthHelpers } from "@cloudflare/workers-oauth-provider";
+import type { UnipaBindings } from "./unipa/types";
 
-export interface Env {
+export interface Env extends UnipaBindings {
   OAUTH_KV: KVNamespace;
   OAUTH_PROVIDER: OAuthHelpers;
   PUBLIC_URL: string;
   GOOGLE_CLIENT_ID: string;
   GOOGLE_CLIENT_SECRET: string;
-  ALLOWED_EMAILS?: string;
 }
 
 export interface GoogleGrant {
