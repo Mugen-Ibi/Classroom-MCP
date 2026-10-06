@@ -6,6 +6,8 @@
 
 **初めて使う方は[個人デプロイガイド](docs/personal-deployment.md)を参照してください。** ソースの取得からGoogle OAuth設定、ChatGPTへの接続まで順番に説明しています。
 
+設計・実装・検証記録は[ドキュメント案内](docs/README.md)にまとめています。2026-10-06時点でUNIPAを含むコードの公開・デプロイは完了していますが、本人のUNIPA SecretsによるCloudflareからの取得は未検証です。
+
 必要なものは、Cloudflareアカウント、Google Cloudプロジェクトを作成できるアカウント、学生としてClassroomに所属するGoogleアカウント、Node.js 24以上、Git、OAuthとStreamable HTTPに対応したMCPクライアントです。学校アカウントには管理者の許可が必要になる場合があります。ChatGPTのカスタムMCP接続の利用可否はプランと管理設定に依存します。
 
 Google OAuthをExternal / Testingで使う場合、この構成の更新トークンは7日で期限切れになります。個人デプロイでも再接続が必要です。Cloudflare・Googleの無料枠や料金、利用制限は各自のアカウントで確認してください。
@@ -22,7 +24,7 @@ ChatGPT / MCPクライアント
   → 本人確認・UNIPA Secrets → 通常Web/JSF → 掲示一覧（任意）
 ```
 
-SDK v2のstateless MCPを使います。Durable Objectsは不要です。認証情報はWorkers OAuth ProviderがKV内に暗号化して保存します。課題の作成・提出・編集は実装していません。各接続はログインした本人のGoogleアカウントを使います。
+SDK v2のstateless MCPを使います。Durable Objectsは不要です。Googleの認証情報はWorkers OAuth ProviderがKV内に暗号化して保存します。課題の作成・提出・編集は実装していません。各接続はログインした本人のGoogleアカウントを使います。
 
 UNIPAのHTTP・認証・キャッシュは`src/unipa/`、ツール登録は`src/tools/unipa.ts`へ分離しています。同じMCPを使い、学生が管理する接続・デプロイを1組に保ちます。UNIPA専用MCPが必要になった場合も、このモジュールを別の認証入口へ接続できます。初期構成にAggregatorやブラウザ実行基盤は追加していません。
 
@@ -54,6 +56,8 @@ Classroomへの読み取りは、通信失敗・タイムアウト・HTTP 408/42
 
 UNIPAを設定し、接続時に追加権限`unipa:read`へ同意すると、次の3ツールを提供します。Googleに求めるOAuth権限は変更しません。既存のClassroom接続にはUNIPA権限を自動追加しないため、設定後はMCPアプリを再接続してください。
 
+片方だけのSecretがある場合も追加同意とツール表示の対象になりますが、実際の読み取りは両Secret・専用KV・本人メール1件を確認してから行います。不足があれば設定エラーを返し、UNIPAへログインしません。
+
 | ツール                        | 内容                                                                 |
 | ----------------------------- | -------------------------------------------------------------------- |
 | `unipa_list_announcements`    | 全表示の掲示一覧。件名・カテゴリ・差出人・掲示日・未読状態・重要表示 |
@@ -64,7 +68,7 @@ UNIPAを設定し、接続時に追加権限`unipa:read`へ同意すると、次
 
 ### 本人のWorkerへ設定
 
-1. このREADMEのGoogle設定と学生自身のデプロイ先設定を済ませます。
+1. [個人デプロイガイド](docs/personal-deployment.md)に従い、本人のGoogle設定・Worker・Classroom接続を済ませます。UNIPAの設定はその後に追加できます。
 2. 本人の通知専用KVを作ります。既存OAuthのKVとは分けます。
 
    ```bash
@@ -96,6 +100,8 @@ UNIPAを設定し、接続時に追加権限`unipa:read`へ同意すると、次
 4. 設定を含むWorkerをデプロイした後、MCPアプリを再接続し、UNIPA通知の追加読み取り権限を確認して許可します。
 5. `unipa_connection_status`で設定状態を確認し、`unipa_list_announcements`で1回取得します。`complete: true`、件数、鮮度を公式の「全表示」と照合してください。
 
+`unipa_connection_status`はログインを試みないため、`configured: true`でも認証成功を意味しません。`authenticated`は`null`で、`lastSuccessAt`・`stale`・`reason`・`retryAt`は保存済みの取得状態を表します。Google用の`/health`もUNIPAを検証しません。
+
 UNIPAの所有者確認は、資格情報の使用と通知KVの読み取りより先に行います。`ALLOWED_EMAILS`が空・複数・本人と不一致、片方だけのSecret、KV未設定の場合はUNIPAへのログインを行いません。Classroomの機能とは独立した設定エラーを返します。
 
 ### 取得・保存・停止
@@ -103,6 +109,8 @@ UNIPAの所有者確認は、資格情報の使用と通知KVの読み取りよ�
 本学では調査した内部API入口がWEB-APIライセンス拒否だったため、固定した本学UNIPAのHTTPS originに対する通常WebログインとJSF一覧取得を使用します。応答のスクリプトは実行しません。Cookie jarは取得処理中のメモリーだけに置き、Cookie・rx系状態・ViewStateをKVやMCP結果へ保存しません。資格情報、本文、通信ログ、実ページのHTML/XMLをログへ出しません。
 
 一覧は15分のキャッシュを使い、成功した通知データだけを専用KVへ最大24時間保存します。取得失敗時は前回の成功結果を`stale: true`と理由コード付きで返すか、キャッシュがなければエラーを返します。取得失敗を「通知0件」として保存しません。各ページの`nextOffset`が`null`になるまで同じフィルターで続きを取得してください。
+
+通知一覧の絞り込みは`query`（件名・カテゴリ・差出人の部分一致）と`unreadOnly`です。日付フィルターはありません。ページ分割は`offset`と`limit`（既定50、最大100）を使います。`totalCount`は取得した全件数、`filteredCount`は通知の絞り込み後、`candidateCount`は授業変更候補の絞り込み後の件数です。
 
 認証拒否・MFA/CAPTCHAは自動再試行を停止します。本人が公式画面で通常ログインを確認し、必要ならSecretsを修正した後、**`UNIPA_AUTH_REVISION`を前回と異なる値（例：`2`）へ変更**すると再開できます。この値は非機密の実行時変数で、既定は`1`です。資格情報を含めず、英数字・`_`・`-`の1～64文字にしてください。認証失敗を繰り返す目的で変更しないでください。
 
@@ -202,6 +210,8 @@ Classroomから今週締切の課題を取得して、日本時間で締切順�
 
 接続の取り消しとWorkerの削除は[個人デプロイガイド](docs/personal-deployment.md#利用停止と認証の取り消し)を参照してください。アイコンの元画像と生成プロンプトは[design/README.md](design/README.md)、設計と性能の検証記録は[REVIEW.md](REVIEW.md)にあります。
 
+UNIPAだけの停止、認証拒否後の再開、通知専用KVの扱いも[個人デプロイガイド](docs/personal-deployment.md#unipaの認証停止から再開する)に記載しています。すべての文書は[ドキュメント案内](docs/README.md)から参照できます。
+
 ## ローカル開発と検証
 
 Node.js 24以上を使用します。
@@ -228,15 +238,21 @@ MCP Inspectorで確認する場合は`npx @modelcontextprotocol/inspector`を実
 
 ## トラブルシューティング
 
-| 症状                    | 確認する設定                                                                      |
-| ----------------------- | --------------------------------------------------------------------------------- |
-| `redirect_uri_mismatch` | Googleに登録した`/callback`と`PUBLIC_URL`。末尾スラッシュの違いも確認             |
-| `access_denied`         | Googleのテストユーザー、全Classroom読み取り権限、ALLOWED_EMAILS、学校の管理者設定 |
-| Google APIの403         | Classroom APIが有効か、学生として所属しているか、OAuth権限と管理者ポリシー        |
-| 7日後に認証が切れる     | GoogleのTesting状態。MCPを再接続                                                  |
-| Workerの503             | 実行時Secrets、OAUTH_KVのバインディング、PUBLIC_URLの設定                         |
-| GitHubからのビルド失敗  | Worker名一致、Node.js 24以上、ビルドコマンド、KV設定                              |
-| 締切一覧が不完全        | `warnings`を確認し、courseIdを指定して再検索                                      |
+| 症状                      | 確認する設定                                                                      |
+| ------------------------- | --------------------------------------------------------------------------------- |
+| `redirect_uri_mismatch`   | Googleに登録した`/callback`と`PUBLIC_URL`。末尾スラッシュの違いも確認             |
+| `access_denied`           | Googleのテストユーザー、全Classroom読み取り権限、ALLOWED_EMAILS、学校の管理者設定 |
+| Google APIの403           | Classroom APIが有効か、学生として所属しているか、OAuth権限と管理者ポリシー        |
+| 7日後に認証が切れる       | GoogleのTesting状態。MCPを再接続                                                  |
+| Workerの503               | 実行時Secrets、OAUTH_KVのバインディング、PUBLIC_URLの設定                         |
+| GitHubからのビルド失敗    | Worker名一致、Node.js 24以上、ビルドコマンド、KV設定                              |
+| 締切一覧が不完全          | `warnings`を確認し、courseIdを指定して再検索                                      |
+| UNIPAツールがない         | UNIPA Secretsの設定状態と、再接続での`unipa:read`への追加同意                     |
+| UNIPAの設定・所有者エラー | `CONFIG_REQUIRED`は両Secret・専用KV・revision、`OWNER_REQUIRED`は本人メール1件    |
+| UNIPAの認証が停止した     | 本人が通常ログインとSecretsを確認した後、`UNIPA_AUTH_REVISION`を変更              |
+| UNIPAの一覧がstale        | `warnings`・`reason`・`retryAt`と公式一覧を確認。取得失敗を通知0件と扱わない      |
+
+UNIPAの画面変更、未取得の本文・対象日・教室、分散ロックの制限と実機検証の範囲は[実装文書](docs/UNIPA_IMPLEMENTATION.md)を参照してください。
 
 ソースではOAuthコードやトークンをログへ出力しません。初期設定でWorkers Observabilityも無効にしています。運用でログを有効にする場合は、認証コールバックのURLやヘッダーを記録しない設定にしてください。
 

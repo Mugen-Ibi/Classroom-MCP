@@ -15,8 +15,25 @@
 
 `npm run check`で79テスト、TypeScript、Workerのdry-runビルド、Prettierを通過。workerdでは既存ClassroomのOAuth・取得・更新と、追加同意後のUNIPA通知取得・保存・ページ分割を合成データで検証した。本物のUNIPA資格情報・掲示・Cookieはテストに使っていない。
 
+## 公開・本番反映の確認
+
+実装コミット`104ba9b`に、GitHub側の個人デプロイ文書・MITライセンスを統合し、[`971807d`](https://github.com/Mugen-Ibi/Classroom-MCP/commit/971807dc8f8fde27b6635e5f6fdcd45f04626521)をmainへpushした。以下は2026-10-06に作者環境で確認した記録であり、各学生のWorkerの検証結果ではない。
+
+| 対象                                                                                                                                                                      | 結果                                                   |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| [GitHub CI](https://github.com/Mugen-Ibi/Classroom-MCP/actions/runs/37398331034)                                                                                          | 成功。79テスト・型チェック・ビルド・整形               |
+| [Workers Builds](https://dash.cloudflare.com/0b77f9bc7b926e018e0fd95ca40ce913/workers/services/view/classroom-mcp/production/builds/d2067038-66fa-4e5f-844d-364a2623c255) | 同じコミットの本番デプロイが成功                       |
+| `/health`                                                                                                                                                                 | 200、`status: ok`。Google設定の存在のみを確認          |
+| 認証なしの`/mcp`                                                                                                                                                          | 401、OAuthの認証案内あり                               |
+| OAuth公開メタデータ                                                                                                                                                       | 200、`classroom:read`・`offline_access`。UNIPAは未設定 |
+| 静的アイコン3点                                                                                                                                                           | 200、PNG、リポジトリのファイルとバイト一致             |
+
+この後、mainに取り込み済みのローカル`codex/classroom-icon`・`codex/classroom-performance-review`と、PR #1がマージ済みのリモート`docs/personal-deployment`を削除した。整理時点でmainとorigin/mainは一致し、未コミットの変更はなかった。
+
 ## 実機検証で残ること
 
 本人のSecretsと専用KVを設定した後のCloudflareからのログイン・全件取得・CPU制限・既読状態・通常ログインへの影響は未検証。設定がない場合は既存Classroomの5ツールだけを提供する。
 
 KVは分散ロックではないため、複数isolateの同時ログインを完全には防がない。最初は直列に検証し、実測で必要なら取得の直列化をDurable Objectへ移す。この制限と認証失敗時の再開手順はREADMEと実装文書に記載した。
+
+現在の手順は[個人デプロイガイド](personal-deployment.md)、実装上の制約は[UNIPA実装](UNIPA_IMPLEMENTATION.md)、文書全体の位置付けは[ドキュメント案内](README.md)を参照。

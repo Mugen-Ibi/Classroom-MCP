@@ -1,6 +1,13 @@
 # Classroom MCPのロゴ
 
-組み込みimage_genで生成したオリジナルロゴです。元画像は`classroom-logo-source.png`、配信用は`../public/icon-512.png`、`icon-128.png`、`favicon.png`です。配信用PNGは生成画像を縮小・圧縮して作成し、WorkerのJavaScriptに埋め込まず静的アセットとして配信します。
+組み込みimage_genで生成したオリジナルロゴです。Googleの公式ロゴではありません。配信用PNGは生成画像を縮小・圧縮して作成し、WorkerのJavaScriptに埋め込まず静的アセットとして配信します。
+
+| ファイル                                               | 用途                             |
+| ------------------------------------------------------ | -------------------------------- |
+| [classroom-logo-source.png](classroom-logo-source.png) | 生成した元画像                   |
+| [icon-512.png](../public/icon-512.png)                 | MCPの512pxアイコン               |
+| [icon-128.png](../public/icon-128.png)                 | MCPの128pxアイコンとページ内表示 |
+| [favicon.png](../public/favicon.png)                   | ブラウザーのfavicon              |
 
 使用したプロンプト：
 
@@ -9,3 +16,5 @@ Use case: logo-design. Asset: square app icon for a personal Google Classroom re
 ```
 
 MCPのserverInfoに128px・512pxアイコンのURLを登録しています。対応クライアントで表示できます。ホームページ・OAuth同意画面にもロゴとfaviconを設定しています。
+
+個人デプロイではアイコンURLも`PUBLIC_URL`を基に自分のWorkerへ向きます。2026-10-06の作者環境では3点の配信用PNGが200で返り、ソースのファイルとバイト一致したことを確認しています。[公開確認記録](../docs/UNIPA_REVIEW_2026-10-06.md)と[ドキュメント案内](../docs/README.md)を参照してください。
