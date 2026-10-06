@@ -10,3 +10,4 @@ coverage/
 *.log
 # Private browser evidence must never be included in the public repository.
 docs/evidence/
+wrangler.jsonc
