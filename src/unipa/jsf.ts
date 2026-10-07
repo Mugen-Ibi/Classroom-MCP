@@ -16,6 +16,7 @@ export interface HtmlElement {
   hasAttribute(name: string): boolean;
   querySelector(selector: string): HtmlElement | null;
   querySelectorAll(selector: string): HtmlElement[];
+  contains(element: HtmlElement): boolean;
   replaceWith(element: HtmlElement): void;
   remove(): void;
   appendChild(element: HtmlElement): void;
@@ -35,18 +36,63 @@ export const text = (node: {
     .replace(/\s+/g, " ")
     .trim();
 
+// Exclude samples only within a structurally identified notice detail body.
+// Portal form IDs alone never exempt authentication controls.
+function noticeBodyCells(doc: HtmlDocument): HtmlElement[] {
+  const rows = doc.querySelectorAll("tr");
+  const labelledRows = (label: string) =>
+    rows.filter(
+      (row) =>
+        text(
+          row.querySelector("td:first-child label") ??
+            row.querySelector("td:first-child") ?? { textContent: "" },
+        ) === label,
+    );
+  if (
+    !["件名", "カテゴリ", "差出人", "本文"].every(
+      (label) => labelledRows(label).length === 1,
+    )
+  )
+    return [];
+  const body = labelledRows("本文")[0]!.querySelector("td:nth-child(2)");
+  return body ? [body] : [];
+}
+
 // Authentication controls are state signals; words inside a notice are not.
 // Parse inert DOM only, and never return the challenge or attempt to solve it.
 export function assertNoAuthChallenge(doc: HtmlDocument): void {
-  if (doc.querySelector("#cf-error-details, #accessDenied, #access-denied"))
+  const bodies = noticeBodyCells(doc);
+  const outsideBody = (element: HtmlElement) =>
+    !bodies.some((body) => body.contains(element));
+  if (
+    doc
+      .querySelectorAll("#cf-error-details, #accessDenied, #access-denied")
+      .some(outsideBody)
+  )
     throw new UnipaError("AUTH_REJECTED");
   if (
-    doc.querySelector(
-      '.g-recaptcha, .h-captcha, .cf-turnstile, #challenge-form, [id^="cf-chl-"], iframe[src*="recaptcha"], iframe[src*="hcaptcha"]',
-    )
+    doc
+      .querySelectorAll(
+        '.g-recaptcha, .h-captcha, .cf-turnstile, #challenge-form, [id^="cf-chl-"], iframe[src*="recaptcha"], iframe[src*="hcaptcha"]',
+      )
+      .some(outsideBody)
   )
     throw new UnipaError("INTERACTIVE_AUTH_REQUIRED");
-  for (const element of doc.querySelectorAll("form")) {
+  const authName =
+    /(?:^|[:_-])(?:otp|totp|mfa|captcha|verification.?code|authentication.?code)(?:$|[:_-])/i;
+  if (
+    doc
+      .querySelectorAll("input")
+      .some(
+        (input) =>
+          outsideBody(input) &&
+          (input.getAttribute("autocomplete") === "one-time-code" ||
+            authName.test(input.getAttribute("name") ?? "") ||
+            authName.test(input.getAttribute("id") ?? "")),
+      )
+  )
+    throw new UnipaError("INTERACTIVE_AUTH_REQUIRED");
+  for (const element of doc.querySelectorAll("form").filter(outsideBody)) {
     const identity = ["id", "name", "action"]
       .map((attribute) => element.getAttribute(attribute) ?? "")
       .join(" ");
@@ -54,35 +100,18 @@ export function assertNoAuthChallenge(doc: HtmlDocument): void {
       /mfa|two.?factor|multi.?factor|one.?time|\botp|totp|captcha|challenge/i.test(
         identity,
       );
-    const authControl =
-      element.querySelector('input[autocomplete="one-time-code"]') ||
-      element
-        .querySelectorAll("input")
-        .some(
-          (input) =>
-            /(?:^|[:_-])(?:otp|totp|mfa|captcha|verification.?code|authentication.?code)(?:$|[:_-])/i.test(
-              input.getAttribute("name") ?? "",
-            ) ||
-            /(?:^|[:_-])(?:otp|totp|mfa|captcha|verification.?code|authentication.?code)(?:$|[:_-])/i.test(
-              input.getAttribute("id") ?? "",
-            ),
-        );
-    const portalForm =
-      element.getAttribute("id") === "funcForm" ||
-      element.getAttribute("id") === "menuForm";
-    if (
-      (authForm && element.querySelector("input, button")) ||
-      (authControl && !portalForm)
-    )
+    if (authForm && element.querySelectorAll("input, button").some(outsideBody))
       throw new UnipaError("INTERACTIVE_AUTH_REQUIRED");
   }
 }
 
 export function assertAuthenticated(doc: HtmlDocument): void {
   assertNoAuthChallenge(doc);
+  const bodies = noticeBodyCells(doc);
   if (
-    doc.querySelector('input[type="password"]') ||
-    doc.getElementById("loginForm")
+    doc
+      .querySelectorAll('input[type="password"], #loginForm')
+      .some((element) => !bodies.some((body) => body.contains(element)))
   )
     throw new UnipaError("SESSION_EXPIRED");
   // A notice mentioning login/session problems is data, not an auth-state signal.

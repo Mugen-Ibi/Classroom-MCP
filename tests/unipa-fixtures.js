@@ -27,6 +27,16 @@ export function partial(updates, state = "synthetic-updated-state") {
 // Synthetic HTTP-200 interstitials: no real university challenge or account data.
 export const authChallenges = [
   [
+    "OTP partial fragment without a form",
+    '<div id="funcForm:authPanel"><label>認証コード</label><input name="otp"><button>確認</button></div>',
+    "INTERACTIVE_AUTH_REQUIRED",
+  ],
+  ...["funcForm", "menuForm"].map((id) => [
+    `OTP inside ${id}`,
+    `<form id="${id}"><label>認証コード</label><input name="otp" autocomplete="one-time-code"><button>確認</button></form>`,
+    "INTERACTIVE_AUTH_REQUIRED",
+  ]),
+  [
     "MFA",
     '<form id="mfaForm"><label>認証コード</label><input name="otp"><button>確認</button></form>',
     "INTERACTIVE_AUTH_REQUIRED",

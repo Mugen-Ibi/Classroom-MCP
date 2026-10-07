@@ -218,6 +218,40 @@ describe("HTTP/JSF important detail reader", () => {
       ).text,
     ).toContain("認証コード");
   });
+  it.each([false, true])(
+    "excludes authentication sample markup only inside the identified notice body (full page: %s)",
+    async (fullPage) => {
+      const source = "funcForm:dynamicRow:detail";
+      const command = fullPage
+        ? `syncTransition("${source}");PrimeFaces.addSubmitParam("funcForm",{"${source}":"${source}"}).submit("funcForm");return false;`
+        : undefined;
+      const detail =
+        '<form id="funcForm"><table><tr><td>件名</td><td>休講のお知らせ</td></tr><tr><td>カテゴリ</td><td>合成カテゴリ</td></tr><tr><td>差出人</td><td>合成差出人</td></tr><tr><td>本文</td><td>認証サンプルです。<div id="mfaForm"><label>認証コード</label><input name="otp" autocomplete="one-time-code"><input type="password"><button>確認</button></div><div class="g-recaptcha"></div></td></tr></table></form>';
+      const flow = await boardFlow("休講のお知らせ", {
+        command,
+        response: fullPage ? detail : partial([["funcForm", detail]]),
+      });
+      expect(
+        (
+          await createNoticeBoardBodyReader(flow.board).read(
+            flow.board.snapshot.notices[0]!,
+          )
+        ).text,
+      ).toContain("認証サンプル");
+    },
+  );
+  it("does not let an identified body exempt an OTP control outside that body", async () => {
+    const detail =
+      '<form id="funcForm"><table><tr><td>件名</td><td>休講のお知らせ</td></tr><tr><td>カテゴリ</td><td>合成カテゴリ</td></tr><tr><td>差出人</td><td>合成差出人</td></tr><tr><td>本文</td><td>通常の本文</td></tr></table><label>認証コード</label><input autocomplete="one-time-code"><button>確認</button></form>';
+    const flow = await boardFlow("休講のお知らせ", {
+      response: partial([["funcForm", detail]]),
+    });
+    await expect(
+      createNoticeBoardBodyReader(flow.board).read(
+        flow.board.snapshot.notices[0]!,
+      ),
+    ).rejects.toMatchObject({ code: "INTERACTIVE_AUTH_REQUIRED" });
+  });
   it("uses a live-list dynamic source once, rotated state and only the matched notice", async () => {
     const flow = await boardFlow();
     const source = createNoticeBoardBodyReader(flow.board);

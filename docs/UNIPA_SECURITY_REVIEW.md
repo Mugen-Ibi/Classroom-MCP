@@ -31,4 +31,6 @@
 
 この追補は実大学・実callbackの検証や本番運用承認ではない。独立レビュー全体の完了を意味しない。
 
+再レビュー追補: P1の解消報告を受領。P2に残っていた`funcForm`/`menuForm`のOTP検出免除を削除した。強い認証controlはform IDやformの有無に依存せず検出し、件名・カテゴリ・差出人・本文の一意なlabel構造で識別した本文cell内のサンプルだけを除外する。本文外のcontrolは除外しない。両portal formの全HTML・通常/root/想定外partial、formなしOTP断片、本文内サンプル、本文外OTPを追加検証。最新の`npm.cmd run check`は10ファイル234テストを含め全成功。実DOMで同じchallengeが発生するかは未確認で、独立レビューの最終完了報告も未受領。
+
 追補の検証: `npm.cmd run check`が成功（config検査、TypeScript、Wrangler deploy dry-run、10ファイル210テスト、Prettier）。Miniflareの実DO handlerで、500から署名付き再送の202受理と同一event ID、本文の利用可否、UNIPA追加通信ゼロを確認した。fixtureの固定Dateとworkerdの実時計の競合はtests内のalarm時刻変換で抑え、本番handlerを明示的に呼び出して検証した。実運用のalarm配信時刻は未検証。
