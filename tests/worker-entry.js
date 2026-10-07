@@ -2,8 +2,8 @@
 import worker from "../dist/index.js";
 const RealDate = Date;
 let fixtureNow = RealDate.parse("2026-10-07T03:00:00Z");
-export function advanceFixtureClock() {
-  fixtureNow += 5 * 3600_000;
+export function advanceFixtureClock(milliseconds = 5 * 3600_000) {
+  fixtureNow += milliseconds;
 }
 globalThis.Date = class extends RealDate {
   constructor(...args) {

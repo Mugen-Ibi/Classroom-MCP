@@ -1,6 +1,7 @@
 import google from "./google-mock.js";
 import { loginHtml, portalHtml, boardHtml, partial } from "./unipa-fixtures.js";
 let changed = false;
+let callbackStatus = 202;
 const events = [],
   trace = [];
 const callbacks = [];
@@ -15,6 +16,14 @@ export default {
     if (url.pathname === "/__next_fixture") {
       changed = true;
       return new Response("fixture changed");
+    }
+    if (url.pathname === "/__fail_callback_fixture") {
+      callbackStatus = 500;
+      return new Response("fixture failure enabled");
+    }
+    if (url.pathname === "/__accept_callback_fixture") {
+      callbackStatus = 202;
+      return new Response("fixture acceptance enabled");
     }
     if (url.pathname === "/__trace_fixture")
       return Response.json({ events, trace, callbacks, routes });
@@ -52,7 +61,7 @@ export default {
       if (data.type === "verification")
         return Response.json({ challenge: data.challenge });
       events.push(data);
-      return new Response(null, { status: 202 });
+      return new Response(null, { status: callbackStatus });
     }
     if (url.hostname !== "unipa.i-u.ac.jp") return google.fetch(request);
     trace.push({ path: url.pathname, method: request.method });

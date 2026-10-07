@@ -35,7 +35,51 @@ export const text = (node: {
     .replace(/\s+/g, " ")
     .trim();
 
+// Authentication controls are state signals; words inside a notice are not.
+// Parse inert DOM only, and never return the challenge or attempt to solve it.
+export function assertNoAuthChallenge(doc: HtmlDocument): void {
+  if (doc.querySelector("#cf-error-details, #accessDenied, #access-denied"))
+    throw new UnipaError("AUTH_REJECTED");
+  if (
+    doc.querySelector(
+      '.g-recaptcha, .h-captcha, .cf-turnstile, #challenge-form, [id^="cf-chl-"], iframe[src*="recaptcha"], iframe[src*="hcaptcha"]',
+    )
+  )
+    throw new UnipaError("INTERACTIVE_AUTH_REQUIRED");
+  for (const element of doc.querySelectorAll("form")) {
+    const identity = ["id", "name", "action"]
+      .map((attribute) => element.getAttribute(attribute) ?? "")
+      .join(" ");
+    const authForm =
+      /mfa|two.?factor|multi.?factor|one.?time|\botp|totp|captcha|challenge/i.test(
+        identity,
+      );
+    const authControl =
+      element.querySelector('input[autocomplete="one-time-code"]') ||
+      element
+        .querySelectorAll("input")
+        .some(
+          (input) =>
+            /(?:^|[:_-])(?:otp|totp|mfa|captcha|verification.?code|authentication.?code)(?:$|[:_-])/i.test(
+              input.getAttribute("name") ?? "",
+            ) ||
+            /(?:^|[:_-])(?:otp|totp|mfa|captcha|verification.?code|authentication.?code)(?:$|[:_-])/i.test(
+              input.getAttribute("id") ?? "",
+            ),
+        );
+    const portalForm =
+      element.getAttribute("id") === "funcForm" ||
+      element.getAttribute("id") === "menuForm";
+    if (
+      (authForm && element.querySelector("input, button")) ||
+      (authControl && !portalForm)
+    )
+      throw new UnipaError("INTERACTIVE_AUTH_REQUIRED");
+  }
+}
+
 export function assertAuthenticated(doc: HtmlDocument): void {
+  assertNoAuthChallenge(doc);
   if (
     doc.querySelector('input[type="password"]') ||
     doc.getElementById("loginForm")
@@ -140,13 +184,16 @@ export function applyPartial(
       if (!value.trim() || (viewState !== undefined && viewState !== value))
         throw new UnipaError("FORMAT_CHANGED");
       viewState = value;
-    } else if (expected.includes(id)) {
+    } else {
+      // Challenge HTML may arrive at an unexpected update target. Classify it
+      // before checking render IDs, rather than retaining the old portal DOM.
+      const fragment = html(update.textContent ?? "");
+      assertAuthenticated(fragment);
+      if (!expected.includes(id)) continue;
       if (!(update.textContent ?? "").trim()) {
         doc.getElementById(id)?.remove();
         continue;
       }
-      const fragment = html(update.textContent ?? "");
-      assertAuthenticated(fragment);
       const replacement = fragment.getElementById(id);
       const old = doc.getElementById(id);
       if (!old || !replacement) throw new UnipaError("FORMAT_CHANGED");

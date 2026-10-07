@@ -13,6 +13,7 @@ import {
   dispatchNoticeOutbox,
   reconcileNoticeEvents,
   type NoticeEventState,
+  type NoticeEvent,
 } from "./events";
 import { importancePolicySchema, classifyImportance } from "./importance";
 import { digest, type collectNoticeBoard } from "./notices";
@@ -33,6 +34,9 @@ import {
   validateCallbackUrl,
   type WebhookDestination,
 } from "./webhook";
+
+export const NOTICE_BODY_RETENTION_MS = 24 * 3600_000;
+export const NOTICE_METADATA_RETENTION_MS = 30 * 24 * 3600_000;
 
 export const monitorPrincipalSchema = z
   .object({
@@ -86,7 +90,11 @@ interface ArchivedNotice {
   detectedAt: string;
   expiresAt: number;
   acquisition:
-    "pending" | "attempting" | "complete" | "uncertain_after_interrupted_read";
+    | "pending"
+    | "attempting"
+    | "complete"
+    | "uncertain_after_interrupted_read"
+    | "expired";
   result?: BodyResult;
 }
 interface MonitorData {
@@ -175,7 +183,24 @@ export class UnipaNoticeMonitor {
       data.revision = this.dependencies.revision();
     }
     const now = Date.now();
-    data.archive = data.archive.filter((item) => item.expiresAt > now);
+    data.archive = data.archive.filter(
+      (item) =>
+        now - Date.parse(item.detectedAt) < NOTICE_METADATA_RETENTION_MS,
+    );
+    for (const item of data.archive)
+      if (item.expiresAt <= now) {
+        const readStateMayHaveChanged =
+          item.result?.readStateMayHaveChanged ??
+          (item.acquisition === "attempting" ||
+            item.acquisition === "uncertain_after_interrupted_read");
+        item.acquisition = "expired";
+        item.result = {
+          noticeId: item.notice.id,
+          unreadAtDetection: item.notice.unread,
+          status: "expired",
+          readStateMayHaveChanged,
+        };
+      } // Keep only metadata/tombstones; never extend private body retention for failed delivery.
     data.subscriptions = data.subscriptions.filter(
       (item) => item.expiresAt > now,
     );
@@ -222,6 +247,29 @@ export class UnipaNoticeMonitor {
     return this.serial(async () => {
       await this.dependencies.store.save(await this.data());
     });
+  }
+  retryDeliveries() {
+    return this.poll(undefined, undefined, false);
+  }
+  private bodyReference(
+    data: MonitorData,
+    event: Pick<NoticeEvent, "eventId" | "timestamp">,
+  ) {
+    const cached = data.archive.find((item) => item.eventId === event.eventId);
+    const expiresAt =
+      cached?.expiresAt ??
+      Date.parse(event.timestamp) + NOTICE_BODY_RETENTION_MS;
+    return {
+      status:
+        Date.now() >= expiresAt
+          ? ("expired" as const)
+          : cached?.result?.status === "retrieved" && cached.result.body
+            ? ("available" as const)
+            : ("unavailable" as const),
+      expiresAt: new Date(expiresAt).toISOString(),
+      tool: "unipa_read_cached_important_notice" as const,
+      readStateMayHaveChanged: cached?.result?.readStateMayHaveChanged ?? null,
+    };
   }
   listEvents(owner: MonitorPrincipal) {
     return this.serial(async () => {
@@ -385,6 +433,11 @@ export class UnipaNoticeMonitor {
         })),
       );
       if (input.data.mode === "queue") {
+        data.archive = data.archive.filter(
+          (cached) =>
+            cached.acquisition !== "expired" ||
+            !prepared.some((item) => item.eventId === cached.eventId),
+        );
         const additions = prepared.filter(
           (item) =>
             !data.archive.some((cached) => cached.eventId === item.eventId),
@@ -420,7 +473,7 @@ export class UnipaNoticeMonitor {
       };
     });
   }
-  poll(owner?: MonitorPrincipal, scheduledAt?: number) {
+  poll(owner?: MonitorPrincipal, scheduledAt?: number, allowCollection = true) {
     return this.serial(async () => {
       if (!this.dependencies.enabled) return { status: "disabled" };
       if (owner) await this.authorize(owner);
@@ -451,12 +504,12 @@ export class UnipaNoticeMonitor {
       }
       await this.authorize(principal);
       data.owner = principal;
-      data.archive = data.archive.filter((item) => item.expiresAt > now);
       for (const item of data.archive)
         if (item.acquisition === "attempting")
           item.acquisition = "uncertain_after_interrupted_read";
       const scope = await this.dependencies.scope(principal);
       if (
+        allowCollection &&
         noticePollDue(
           { enabled: true },
           data.lastAttemptAt,
@@ -503,7 +556,7 @@ export class UnipaNoticeMonitor {
                 eventId: item.event.eventId,
                 notice,
                 detectedAt: item.event.timestamp,
-                expiresAt: Date.now() + 24 * 3600_000,
+                expiresAt: Date.now() + NOTICE_BODY_RETENTION_MS,
                 acquisition: "pending",
               });
             item.status = "accepted"; // Fan-out queued durably; this is NOT webhook acceptance.
@@ -576,6 +629,7 @@ export class UnipaNoticeMonitor {
                 return (
                   !cached ||
                   cached.acquisition === "complete" ||
+                  cached.acquisition === "expired" ||
                   cached.acquisition === "uncertain_after_interrupted_read"
                 );
               }),
@@ -589,7 +643,22 @@ export class UnipaNoticeMonitor {
                   subscription.expiresAt <= Date.now()
                 )
                   return { status: 403 };
-                return this.dependencies.webhook.deliver(subscription, event);
+                // Persist the attempt budget/backoff before sending, including crash paths.
+                const pending = subscription.outbox.find(
+                  (item) => item.event.eventId === event.eventId,
+                )!;
+                pending.attempts++;
+                pending.nextAttemptAt =
+                  Date.now() +
+                  Math.min(3600_000, 30_000 * 2 ** (pending.attempts - 1));
+                await this.dependencies.store.save(data);
+                return this.dependencies.webhook.deliver(subscription, {
+                  ...event,
+                  data: {
+                    ...event.data,
+                    bodyReference: this.bodyReference(data, event),
+                  },
+                });
               },
             },
             { enabled: true },
@@ -615,20 +684,40 @@ export class UnipaNoticeMonitor {
     return this.serial(async () => {
       await this.authorize(owner);
       const data = await this.data(owner);
-      const archived = data.archive.find(
-        (item) => item.eventId === eventId && item.expiresAt > Date.now(),
-      );
+      const archived = data.archive.find((item) => item.eventId === eventId);
       return archived
         ? {
             eventId,
             notice: archived.notice,
             unreadAtDetection: archived.notice.unread,
             acquisition: archived.acquisition,
+            bodyReference: this.bodyReference(data, {
+              eventId,
+              timestamp: archived.detectedAt,
+            }),
             result: archived.result ?? null,
             trust: "untrusted_source",
             note: "本文取得による既読化と、GPT側の判定・通知完了は別の状態です。",
           }
-        : { eventId, status: "not_available", reason: "NOT_CACHED_OR_EXPIRED" };
+        : (() => {
+            const event = data.state?.outbox.find(
+              (item) => item.event.eventId === eventId,
+            )?.event;
+            return event
+              ? {
+                  eventId,
+                  status: "not_available",
+                  reason: "NOT_CACHED_OR_EXPIRED",
+                  notice: event.data,
+                  bodyReference: this.bodyReference(data, event),
+                  trust: "untrusted_source",
+                }
+              : {
+                  eventId,
+                  status: "not_available",
+                  reason: "NOT_CACHED_OR_EXPIRED",
+                };
+          })();
     });
   }
   readSnapshot(owner: MonitorPrincipal) {

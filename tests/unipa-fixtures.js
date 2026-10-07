@@ -23,3 +23,27 @@ export function boardHtml(
 export function partial(updates, state = "synthetic-updated-state") {
   return `<partial-response><changes>${updates.map(([id, body]) => `<update id="${id}"><![CDATA[${body}]]></update>`).join("")}<update id="javax.faces.ViewState"><![CDATA[${state}]]></update></changes></partial-response>`;
 }
+
+// Synthetic HTTP-200 interstitials: no real university challenge or account data.
+export const authChallenges = [
+  [
+    "MFA",
+    '<form id="mfaForm"><label>認証コード</label><input name="otp"><button>確認</button></form>',
+    "INTERACTIVE_AUTH_REQUIRED",
+  ],
+  [
+    "CAPTCHA",
+    '<form id="captchaForm"><div class="g-recaptcha" data-sitekey="fixture-public-sitekey"></div><input name="captcha"></form>',
+    "INTERACTIVE_AUTH_REQUIRED",
+  ],
+  [
+    "WAF challenge",
+    '<form id="challenge-form"><input name="fixture-challenge"></form>',
+    "INTERACTIVE_AUTH_REQUIRED",
+  ],
+  [
+    "WAF denial",
+    '<div id="cf-error-details">Access denied fixture only</div>',
+    "AUTH_REJECTED",
+  ],
+];

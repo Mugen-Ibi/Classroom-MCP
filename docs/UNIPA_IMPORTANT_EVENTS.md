@@ -9,8 +9,8 @@
 - Durable Objectが枠内の最初の試行をHTTP開始前に保存する。成功・失敗どちらでも同じ枠の再ログインをしない。
 - **02:00以上05:00未満の日本時間は保守停止**。一覧、本文、redirect先を含む全UNIPA HTTPリクエストの直前でチェックする。保守帯や取得枠外に入った処理はそこで終了する。
 - 一覧・状態・保存本文の通常toolはキャッシュ参照のみ。tool呼出しが追加のログインを起こすことはない。旧`unipa:read` grantも同じ制限を受ける。
-- 401/403や追加認証は自動取得を停止。429/503は`Retry-After`と次の取得枠を両方満たすまで待つ。詳細ページでの拒否も停止・バックオフへ反映する。WAF/MFAを迂回しない。
-- Webhook再送と保存期限のcleanupはUNIPA取得とは別。UNIPAを開かずに保存済みイベントを配送できる。cleanup alarmはログインしない。
+- 401/403や追加認証は自動取得を停止。429/503は`Retry-After`と次の取得枠を両方満たすまで待つ。詳細ページでの拒否も停止・バックオフへ反映する。HTTP 200のMFA/CAPTCHA/WAF画面も、認証form・入力control・既知のchallenge構造で検出し停止する。全文HTML、JSFの通常・root・想定外targetのpartial updateに適用し、本文に「認証コード」と書かれただけでは停止しない。WAF/MFAを迂回しない。
+- Webhook再送と保存期限のcleanupはUNIPA取得とは別。UNIPAを開かずに保存済みイベントを配送できる。DO alarmは保存済みcallbackの再送とcleanupだけを行い、取得枠内でもUNIPAへログインしない。
 
 「一日3回」は取得セッションの数。ログイン→掲示板→全件表示等の複数HTTPが必要で、HTTP総数が3という意味ではない。1セッションは最大30 requests・120秒。実WAFの許容条件を保証するものではない。
 
@@ -62,7 +62,7 @@ UNIPA自体のWebhook提供は確認できていない。UNIPA→Workerは上記
 
 ChatGPTがcallback URLと`whsec_`署名secretを供給する。本実装がsecretを生成・外部登録する処理はない。購読は本人・URL・event・引数から決定したidで更新し、最大4件、既定24時間で失効する。`ttlMs: null`でも有限のexpiryを返す。署名secret更新は5分間の二重署名に対応する。署名済みchallengeを確認してから保存する。
 
-Webhookには件名等の短いmetadataだけを入れ、本文は本人認可済みの読取toolで取得する。Standard WebhooksのHMAC-SHA256をexact serialized bytesに適用し、retry時もevent IDを維持する。2xxは受理だけを意味する。410/401/403は購読の配送停止、413や他の恒久的4xxは破棄、429/5xx/通信失敗は上限付き指数backoff。配送の進捗を保存する。アプリ側でAI判定や通知を自動実行した事実は未確認。
+Webhookには件名等の短いmetadataだけを入れ、本文は本人認可済みの読取toolで取得する。Standard WebhooksのHMAC-SHA256をexact serialized bytesに適用し、retry時もevent IDを維持する。2xxは受理だけを意味する。410/401/403は購読の配送停止、413や他の恒久的4xxは破棄、429/5xx/通信失敗は上限付き指数backoff。配送の試行数と次回時刻をcallback送信前に永続保存し、最大5回で打ち切る。DO alarmによる保存済みイベントの再送は30秒から指数backoffで行い、本文取得待ちのイベントは次の取得枠まで送らない。アプリ側でAI判定や通知を自動実行した事実は未確認。
 
 OpenAI API keyや推論API呼出しはこのWorkerに不要。ChatGPT Work/Cloud等の対応面と受信後のトリアージ指示、アプリ・タスク権限は別途確認する。Cloudflare DOの稼働・保存には既存KV構成とは別のリソース/費用条件がある。
 
@@ -102,7 +102,7 @@ OpenAI API keyや推論API呼出しはこのWorkerに不要。ChatGPT Work/Cloud
 
 これは既存設定へ**後で統合する案**。migration tagの既存履歴との整合、CPU予算、実callback DNS/TLS到達性を確認してから適用する。DO/追加egressの作成、実稼働・deploy、実購読・callback送信は別の承認が必要。古い配置のまま新版だけをdeployするとlegacy toolは既存キャッシュ参照のみになるため、監視構成と再認可を含めた移行計画が必要。
 
-本文/一覧は最大24時間、差分・event metadataは最大30日。購読secretは購読期限まで、旧secretはrotation windowまで。DO alarmが期限切れを削除する。Cookie、ViewState、ログインフォーム、生HTML/XMLはDOにもKVにも保存しない。停止・削除中のサービスでは即時削除時刻を保証できないが、読取時の論理期限も強制する。
+本文/一覧は最大24時間、差分・event metadataは最大30日。配送失敗でも本文の保存期限を延長しない。期限後は本文を削除し、取得期限・既読化の可能性・`expired`状態だけをmetadataとして残す。Webhookの`bodyReference`にも`available`/`unavailable`/`expired`と固定のexpiry、本人用読取tool名を付ける。同じevent IDの再送時でも期限は再評価するため、受信側は再取得を当然視せず公式画面を案内できる。購読secretは購読期限まで、旧secretはrotation windowまで。DO alarmが期限切れを削除する。Cookie、ViewState、ログインフォーム、生HTML/XMLはDOにもKVにも保存しない。停止・削除中のサービスでは即時削除時刻を保証できないが、読取時の論理期限も強制する。
 
 ## 検証と残る作業
 

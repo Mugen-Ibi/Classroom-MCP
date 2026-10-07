@@ -8,6 +8,7 @@ import { UNIPA_PORTAL } from "../src/unipa/types";
 import type { Env, GoogleAccess } from "../src/types";
 import {
   allId,
+  authChallenges,
   boardHtml,
   loginHtml,
   moreId,
@@ -119,6 +120,16 @@ function memoryKv() {
 }
 
 describe("UNIPA safe list collection", () => {
+  it.each(authChallenges)(
+    "stops on a structural HTTP-200 %s during login",
+    async (_name, markup, code) => {
+      const flow = scriptedFlow({ login: markup });
+      await expect(
+        collectNotices(credentials, undefined, flow.transport),
+      ).rejects.toMatchObject({ code });
+      expect(flow.requests).toHaveLength(2);
+    },
+  );
   it.each([false, true])(
     "applies ViewState after a form replacement, including omitted inputs (%s)",
     async (omitInput) => {

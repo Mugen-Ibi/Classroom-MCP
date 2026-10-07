@@ -56,6 +56,15 @@ const payloadSchema = z
     change: z.enum(["new_identity", "changed_metadata"]),
     identityQuality: z.literal("metadata_derived"),
     trust: z.literal("untrusted_source"),
+    bodyReference: z
+      .object({
+        status: z.enum(["available", "expired", "unavailable"]),
+        expiresAt: z.iso.datetime(),
+        tool: z.literal("unipa_read_cached_important_notice"),
+        readStateMayHaveChanged: z.boolean().nullable(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 export const noticeEventSchema = z

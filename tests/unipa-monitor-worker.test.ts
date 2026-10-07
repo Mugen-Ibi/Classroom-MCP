@@ -257,6 +257,7 @@ it("requires fresh OAuth consent, persists a subscription, acquires a fixture bo
   expect(trace.events).toHaveLength(0);
   expect(trace.trace).toHaveLength(3);
   await mock.fetch(`${origin}/__next_fixture`);
+  await mock.fetch(`${origin}/__fail_callback_fixture`);
   await stub.fetch("https://monitor.internal/__advance_fixture", {
     method: "POST",
   });
@@ -296,6 +297,23 @@ it("requires fresh OAuth consent, persists a subscription, acquires a fixture bo
   const repeated = await (await mock.fetch(`${origin}/__trace_fixture`)).json();
   expect(repeated.events).toHaveLength(1);
   expect(repeated.trace).toHaveLength(7);
+  await mock.fetch(`${origin}/__accept_callback_fixture`);
+  await stub.fetch("https://monitor.internal/__advance_retry_fixture", {
+    method: "POST",
+  });
+  const alarm = await (
+    await stub.fetch("https://monitor.internal/__alarm_fixture", {
+      method: "POST",
+    })
+  ).json();
+  expect(alarm.before).toBeGreaterThan(Date.parse(trace.events[0].timestamp));
+  expect(alarm.before).toBeLessThanOrEqual(alarm.now);
+  expect(alarm.after).toBeGreaterThan(alarm.now + 3600_000);
+  const retried = await (await mock.fetch(`${origin}/__trace_fixture`)).json();
+  expect(retried.events).toHaveLength(2);
+  expect(retried.events[1].eventId).toBe(retried.events[0].eventId);
+  expect(retried.events[1].data.bodyReference.status).toBe("available");
+  expect(retried.trace).toHaveLength(7); // Delivery-only alarm makes zero UNIPA requests.
   const unsubscribed = await rpc("events/unsubscribe", {
     name: "unipa.important_notice_detected",
     arguments: {},

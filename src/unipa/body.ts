@@ -32,6 +32,7 @@ export type BodyStatus =
   | "reader_unavailable"
   | "budget_exceeded"
   | "failed"
+  | "expired"
   | "retrieved";
 export interface BodyResult {
   noticeId: string;

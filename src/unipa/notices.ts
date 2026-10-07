@@ -3,6 +3,7 @@ import {
   ajaxFields,
   applyPartial,
   assertAuthenticated,
+  assertNoAuthChallenge,
   form,
   html,
   text,
@@ -143,8 +144,7 @@ export async function collectNoticeBoard(
   const session = new UnipaSession(signal, transport);
   let page = await session.request(UNIPA_PORTAL);
   let doc = html(page.body);
-  if (/CAPTCHA|ワンタイム|二要素|多要素|認証コード/i.test(text(doc)))
-    throw new UnipaError("INTERACTIVE_AUTH_REQUIRED");
+  assertNoAuthChallenge(doc);
   const login = form(doc, "loginForm", page.url);
   const user = doc
     .querySelector('#loginForm input[type="text"][name$=":userId"]')
@@ -165,8 +165,7 @@ export async function collectNoticeBoard(
   page = await session.request(login.action, login.fields);
   doc = html(page.body);
   const menu = doc.getElementById("menuForm");
-  if (!menu && /CAPTCHA|ワンタイム|二要素|多要素|認証コード/i.test(text(doc)))
-    throw new UnipaError("INTERACTIVE_AUTH_REQUIRED");
+  assertNoAuthChallenge(doc);
   if (
     doc.getElementById("loginForm") ||
     doc.querySelector('input[type="password"]')

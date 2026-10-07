@@ -14,7 +14,13 @@ import {
 } from "../src/unipa/webhook";
 import { handleNoticeEventRpc } from "../src/unipa/event-rpc";
 import type { UnipaBindings } from "../src/unipa/types";
-import { loginHtml, portalHtml, boardHtml, partial } from "./unipa-fixtures.js";
+import {
+  loginHtml,
+  portalHtml,
+  boardHtml,
+  partial,
+  authChallenges,
+} from "./unipa-fixtures.js";
 import type { Transport } from "../src/unipa/session";
 
 const epoch = Date.parse("2026-10-07T03:00:00Z");
@@ -154,6 +160,64 @@ function setup() {
 }
 
 describe("HTTP/JSF important detail reader", () => {
+  it.each(
+    authChallenges.flatMap(([name, markup, code]) => [
+      [`${name}: full HTTP-200 HTML on AJAX`, markup, code, false],
+      [
+        `${name}: expected partial target`,
+        partial([["funcForm", `<form id="funcForm">${markup}</form>`]]),
+        code,
+        false,
+      ],
+      [
+        `${name}: root replacement`,
+        partial([["javax.faces.ViewRoot", markup]]),
+        code,
+        false,
+      ],
+      [
+        `${name}: unexpected partial target`,
+        partial([["authPanel", markup]]),
+        code,
+        false,
+      ],
+      [`${name}: full-page transition`, markup, code, true],
+    ]),
+  )(
+    "classifies %s before format/identity parsing and never retries the detail",
+    async (_name, response, code, fullPage) => {
+      const source = "funcForm:dynamicRow:detail";
+      const command = fullPage
+        ? `syncTransition("${source}");PrimeFaces.addSubmitParam("funcForm",{"${source}":"${source}"}).submit("funcForm");return false;`
+        : undefined;
+      const flow = await boardFlow("休講のお知らせ", {
+        response: response as string,
+        command,
+      });
+      const reader = createNoticeBoardBodyReader(flow.board);
+      await expect(
+        reader.read(flow.board.snapshot.notices[0]!),
+      ).rejects.toMatchObject({ code });
+      await expect(
+        reader.read(flow.board.snapshot.notices[0]!),
+      ).rejects.toMatchObject({ code: "FORMAT_CHANGED" });
+      expect(flow.requests).toHaveLength(4);
+    },
+  );
+  it("keeps authentication words in a legitimate body as notice data", async () => {
+    const detail =
+      '<form id="funcForm"><table><tr><td>件名</td><td>休講のお知らせ</td></tr><tr><td>カテゴリ</td><td>合成カテゴリ</td></tr><tr><td>差出人</td><td>合成差出人</td></tr><tr><td>本文</td><td>認証コード・多要素認証・CAPTCHAの説明です。</td></tr></table></form>';
+    const flow = await boardFlow("休講のお知らせ", {
+      response: partial([["funcForm", detail]]),
+    });
+    expect(
+      (
+        await createNoticeBoardBodyReader(flow.board).read(
+          flow.board.snapshot.notices[0]!,
+        )
+      ).text,
+    ).toContain("認証コード");
+  });
   it("uses a live-list dynamic source once, rotated state and only the matched notice", async () => {
     const flow = await boardFlow();
     const source = createNoticeBoardBodyReader(flow.board);
@@ -235,6 +299,155 @@ describe("HTTP/JSF important detail reader", () => {
 });
 
 describe("persistent monitor lifecycle and mock webhook end-to-end", () => {
+  it("preserves possible read-state changes in an expired interrupted-attempt tombstone", async () => {
+    const test = setup();
+    await test.monitor.subscribe(owner, subscription);
+    await test.monitor.poll();
+    vi.setSystemTime(epoch + 5 * 3600_000);
+    test.setTitle("休講の新規通知");
+    await test.monitor.poll();
+    const data = test.saved()!;
+    const archive = data.archive[0]!;
+    archive.acquisition = "attempting";
+    delete archive.result;
+    await test.store.save(data);
+    vi.setSystemTime(archive.expiresAt);
+    expect(await test.monitor.readBody(owner, archive.eventId)).toMatchObject({
+      acquisition: "expired",
+      result: { status: "expired", readStateMayHaveChanged: true },
+      bodyReference: { status: "expired", readStateMayHaveChanged: true },
+    });
+  });
+  it.each(authChallenges)(
+    "pauses automatic collection after a detail HTTP-200 %s and retains only a safe failure code",
+    async (_name, markup, code) => {
+      const test = setup();
+      await test.monitor.subscribe(owner, subscription);
+      await test.monitor.poll();
+      vi.setSystemTime(epoch + 5 * 3600_000);
+      const flow = await boardFlow("休講のお知らせ（追加認証）", {
+        response: markup,
+      });
+      test.collect.mockResolvedValueOnce(flow.board);
+      await test.monitor.poll();
+      expect((await test.monitor.status(owner)).automaticRetryPaused).toBe(
+        true,
+      );
+      expect(test.saved()!.archive[0]!.result).toMatchObject({
+        status: "failed",
+        failure: { code },
+      });
+      expect(JSON.stringify(test.saved())).not.toContain(markup);
+      expect(JSON.stringify(test.wire)).not.toContain(markup);
+      vi.setSystemTime(epoch + 19 * 3600_000);
+      await test.monitor.poll();
+      vi.setSystemTime(epoch + 24 * 3600_000);
+      await test.monitor.poll();
+      expect(test.collect).toHaveBeenCalledTimes(2);
+      expect(flow.requests).toHaveLength(4);
+    },
+  );
+  it("reports expired body metadata on the reproduced 17→07→12→17 delayed delivery, without retaining or reopening the body", async () => {
+    const test = setup();
+    await test.monitor.subscribe(owner, subscription);
+    await test.monitor.poll();
+    vi.setSystemTime(epoch + 5 * 3600_000);
+    test.setTitle("休講のお知らせ（配送遅延）");
+    test.setStatus(500);
+    await test.monitor.poll();
+    const eventId = test.saved()!.archive[0]!.eventId;
+    expect(await test.monitor.readBody(owner, eventId)).toMatchObject({
+      result: { status: "retrieved" },
+    });
+    test.setRead(true);
+    vi.setSystemTime(epoch + 19 * 3600_000);
+    await test.monitor.subscribe(owner, subscription);
+    await test.monitor.poll();
+    vi.setSystemTime(epoch + 24 * 3600_000);
+    await test.monitor.poll();
+    vi.setSystemTime(epoch + 29 * 3600_000);
+    test.setStatus(202);
+    await test.monitor.poll();
+    const delivered = test.wire.filter((item) => item.body.name);
+    expect(delivered).toHaveLength(4);
+    expect(delivered[0]!.body.data).toMatchObject({
+      bodyReference: { status: "available" },
+    });
+    expect(delivered.at(-1)!.body.data).toMatchObject({
+      bodyReference: {
+        status: "expired",
+        readStateMayHaveChanged: true,
+        tool: "unipa_read_cached_important_notice",
+      },
+    });
+    expect(new Set(delivered.map((item) => item.body.eventId)).size).toBe(1);
+    const read = await test.monitor.readBody(owner, eventId);
+    expect(read).toMatchObject({
+      acquisition: "expired",
+      result: { status: "expired", readStateMayHaveChanged: true },
+      bodyReference: { status: "expired" },
+    });
+    expect(read.result).not.toHaveProperty("body");
+    expect(JSON.stringify(test.saved()!.archive)).not.toContain(
+      "合成の重要本文",
+    );
+    expect(test.saved()!.subscriptions[0]!.outbox[0]!.status).toBe("accepted");
+  });
+  it("retries saved callbacks during maintenance without UNIPA collection and before body expiry", async () => {
+    const test = setup();
+    await test.monitor.subscribe(owner, subscription);
+    await test.monitor.poll();
+    vi.setSystemTime(epoch + 5 * 3600_000);
+    test.setTitle("休講の新規通知");
+    test.setStatus(500);
+    await test.monitor.poll();
+    const eventId = test.saved()!.archive[0]!.eventId;
+    vi.setSystemTime(epoch + 14 * 3600_000);
+    test.setStatus(202);
+    await new UnipaNoticeMonitor(test.dependencies).retryDeliveries();
+    expect(test.collect).toHaveBeenCalledTimes(2);
+    expect(test.saved()!.subscriptions[0]!.outbox[0]!.status).toBe("accepted");
+    expect(await test.monitor.readBody(owner, eventId)).toMatchObject({
+      result: { status: "retrieved" },
+      bodyReference: { status: "available" },
+    });
+  });
+  it("limits persistent callback failures to five durable attempts without extending body expiry", async () => {
+    const test = setup();
+    await test.monitor.subscribe(owner, subscription);
+    await test.monitor.poll();
+    vi.setSystemTime(epoch + 5 * 3600_000);
+    test.setTitle("休講の新規通知");
+    test.setStatus(500);
+    await test.monitor.poll();
+    const expiresAt = test.saved()!.archive[0]!.expiresAt;
+    for (const seconds of [31, 92, 213, 454, 900, 3600]) {
+      vi.setSystemTime(epoch + 5 * 3600_000 + seconds * 1000);
+      await new UnipaNoticeMonitor(test.dependencies).retryDeliveries();
+    }
+    expect(test.wire.filter((item) => item.body.name)).toHaveLength(5);
+    expect(test.collect).toHaveBeenCalledTimes(2);
+    expect(test.saved()!.subscriptions[0]!.outbox[0]).toMatchObject({
+      status: "discarded",
+      attempts: 5,
+    });
+    expect(test.saved()!.archive[0]!.expiresAt).toBe(expiresAt);
+  });
+  it("commits the delivery attempt and next retry before external callback invocation", async () => {
+    const test = setup();
+    await test.monitor.subscribe(owner, subscription);
+    await test.monitor.poll();
+    vi.setSystemTime(epoch + 5 * 3600_000);
+    test.setTitle("休講の新規通知");
+    test.outbound.mockImplementationOnce(async () => {
+      const pending = test.saved()!.subscriptions[0]!.outbox[0]!;
+      expect(pending.attempts).toBe(1);
+      expect(pending.nextAttemptAt).toBeGreaterThan(Date.now());
+      return new Response(null, { status: 500 });
+    });
+    await test.monitor.poll();
+    expect(test.saved()!.subscriptions[0]!.outbox[0]!.attempts).toBe(1);
+  });
   it("bounds callback verification cache from the last actual challenge", async () => {
     const test = setup();
     await test.monitor.subscribe(owner, subscription);

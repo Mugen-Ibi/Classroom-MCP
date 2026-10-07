@@ -9,6 +9,7 @@ import {
   MonitorError,
   monitorPrincipalSchema,
   type MonitorPrincipal,
+  NOTICE_METADATA_RETENTION_MS,
 } from "./monitor";
 import {
   boundedResponseText,
@@ -110,6 +111,30 @@ export class UnipaMonitor extends DurableObject<Env> {
           await ctx.storage.put("monitor:v1", data);
           const expiries = [
             ...data.archive.map((item) => item.expiresAt),
+            ...data.archive.map(
+              (item) =>
+                Date.parse(item.detectedAt) + NOTICE_METADATA_RETENTION_MS,
+            ),
+            ...data.subscriptions
+              .filter((item) => !item.paused)
+              .flatMap((subscription) =>
+                subscription.outbox
+                  .filter((item) => {
+                    const body = data.archive.find(
+                      (entry) => entry.eventId === item.event.eventId,
+                    );
+                    return (
+                      item.status === "pending" &&
+                      (!body ||
+                        body.acquisition === "complete" ||
+                        body.acquisition === "expired" ||
+                        body.acquisition === "uncertain_after_interrupted_read")
+                    );
+                  })
+                  .map((item) =>
+                    Math.max(Date.now() + 30_000, item.nextAttemptAt),
+                  ),
+              ),
             ...data.subscriptions.flatMap((item) => [
               item.expiresAt,
               ...(item.rotationUntil ? [item.rotationUntil] : []),
@@ -184,6 +209,7 @@ export class UnipaMonitor extends DurableObject<Env> {
     });
   }
   async alarm() {
+    await this.#monitor.retryDeliveries(); // Saved callbacks only: never invokes the collector.
     await this.#monitor.purgeExpired();
   }
   async fetch(request: Request): Promise<Response> {
