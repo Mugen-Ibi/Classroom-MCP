@@ -3,20 +3,25 @@
   "name": "classroom-mcp",
   "main": "src/index.ts",
   "minify": true,
-  "assets": { "directory": "./public" },
+  "assets": {
+    "directory": "./public",
+  },
   "compatibility_date": "2026-10-01",
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
   "workers_dev": true,
   "preview_urls": false,
   "kv_namespaces": [
-    { "binding": "OAUTH_KV", "id": "50886f599f7d48398a628e13f564600c" },
+    {
+      "binding": "OAUTH_KV",
+      "id": "50886f599f7d48398a628e13f564600c",
+    },
     // Optional UNIPA: create your own namespace, then uncomment with its real ID.
     // { "binding": "UNIPA_SNAPSHOTS", "id": "YOUR_OWN_NAMESPACE_ID" },
   ],
-  "observability": { "enabled": false },
-    "vars": {
+  "observability": {
+    "enabled": false,
+  },
+  "vars": {
     "PUBLIC_URL": "https://classroom-mcp.ibimugen.workers.dev",
-    "UNIPA_PASSWORD": "REMOVED_CREDENTIAL",
-    "UNIPA_USER_ID": "REMOVED_CREDENTIAL"
   },
 }

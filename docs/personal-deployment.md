@@ -124,6 +124,10 @@ UNIPAを追加する場合は、この値を本人のGoogleメールアドレス
 
 Dashboardから設定する場合は、Workers & Pages → 自分のWorker → Settings → Variables & Secretsに**実行時Secret**として追加します。Workers Buildsのビルド専用変数ではありません。`.dev.vars`はローカル用で、本番Secretsの代わりにはなりません。
 
+`wrangler.jsonc`にはWorker名・URL・KVのbindingなどの非機密設定だけを保存し、Gitで管理してください。ファイル全体を除外すると、新しいcloneやWorkers Buildsで設定を読み込めなくなります。追跡済みファイルは`.gitignore`に追加しても追跡が続きます。認証情報のキーが混入した場合は`npm run check:config`がCI・ビルド・デプロイを停止します。
+
+秘密情報をコミットした場合は、まず対象サービスでパスワード変更・資格情報の再発行を行い、新しい値をWorkerの実行時Secretsへ設定してください。履歴の書き換えだけでは漏えいした資格情報を無効化できません。GitHubのキャッシュやFork、既存cloneにも残り得るため、[GitHubの削除手順](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/removing-sensitive-data-from-a-repository)も確認してください。
+
 ブラウザーで自分のWorkerの`/health`を開きます。
 
 ```text

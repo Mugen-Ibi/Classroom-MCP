@@ -128,6 +128,8 @@ UNIPAの所有者確認は、資格情報の使用と通知KVの読み取りよ�
 
 リポジトリ内の`wrangler.jsonc`には作者の運用設定が残っています。個人デプロイでは、`name`、`PUBLIC_URL`、`OAUTH_KV`のIDを必ず自分の環境に合わせて変更してください。
 
+`wrangler.jsonc`はビルドに必要なのでGitで管理します。認証情報は含めず、本番はWorkerの実行時Secrets、ローカルはGit対象外の`.dev.vars`に設定してください。`npm run check:config`は既知の認証情報のキーが設定ファイルに入っていないか確認し、CI・ビルド・デプロイの前に実行されます。`.gitignore`への追加だけでは、追跡済みファイルや過去のコミットから秘密情報は消えません。
+
 ## Google Cloudの設定項目
 
 以下のURLの`your-subdomain`は例示です。実際にデプロイしたWorkerのURLに置き換えてください。

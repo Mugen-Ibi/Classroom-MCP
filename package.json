@@ -5,13 +5,14 @@
   "private": true,
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
-    "build": "wrangler deploy --dry-run --outdir dist",
+    "deploy": "npm run check:config && wrangler deploy",
+    "build": "npm run check:config && wrangler deploy --dry-run --outdir dist",
+    "check:config": "node scripts/check-config.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "wrangler deploy --dry-run --outdir dist && vitest run",
+    "test": "npm run check:config && wrangler deploy --dry-run --outdir dist && vitest run",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "check": "tsc --noEmit && wrangler deploy --dry-run --outdir dist && vitest run && prettier --check ."
+    "check": "npm run check:config && tsc --noEmit && wrangler deploy --dry-run --outdir dist && vitest run && prettier --check ."
   },
   "repository": {
     "type": "git",
