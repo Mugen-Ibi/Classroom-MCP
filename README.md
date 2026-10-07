@@ -128,6 +128,15 @@ UNIPAの所有者確認は、資格情報の使用と通知KVの読み取りよ�
 
 リポジトリ内の`wrangler.jsonc`には作者のWorker名・KV設定が残っています。個人デプロイでは、`name`、`OAUTH_KV`のIDを必ず自分の環境に合わせて変更してください。`PUBLIC_URL`などの実行時変数はWorkersのSettingsで設定します。`keep_vars: true`により、デプロイ時にもWorkers側で設定した変数を保持します。
 
+Dashboardの **Workers & Pages → 自分のWorker → Settings → Variables and Secrets** で、次の非機密の実行時変数を設定します。Text変数としてもSecretとしても管理できます。
+
+| 変数                  | 値                                                     |
+| --------------------- | ------------------------------------------------------ |
+| `PUBLIC_URL`          | 自分のWorkerのHTTPS URL。末尾スラッシュなし。必須      |
+| `UNIPA_AUTH_REVISION` | UNIPA認証停止から再開するときに変更する値。省略時は`1` |
+
+Google・UNIPAの認証情報は後述の実行時Secretsへ設定します。KVのbindingとIDは引き続き`wrangler.jsonc`で管理し、`keep_vars`による変数保持とは別に扱います。Workers Buildsのビルド専用変数やローカルの`.dev.vars`を設定しても、本番の実行時変数の代わりにはなりません。
+
 `wrangler.jsonc`はビルドに必要なのでGitで管理します。認証情報は含めず、本番はWorkerの実行時Secrets、ローカルはGit対象外の`.dev.vars`に設定してください。`npm run check:config`は既知の認証情報のキーが設定ファイルに入っていないか確認し、CI・ビルド・デプロイの前に実行されます。`.gitignore`への追加だけでは、追跡済みファイルや過去のコミットから秘密情報は消えません。
 
 ## Google Cloudの設定項目

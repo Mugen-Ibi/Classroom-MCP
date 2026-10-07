@@ -1,8 +1,8 @@
 # UNIPA通知Adapterの実装
 
-更新日：2026-10-06（Asia/Tokyo）。学生ごとに本人のCloudflareへデプロイする方式。
+更新日：2026-10-07（Asia/Tokyo）。学生ごとに本人のCloudflareへデプロイする方式。
 
-通知Adapterと3ツールは実装・公開済みで、`971807d`のGitHub CIとWorkers Buildsは成功した。本番確認時点の作者環境ではUNIPAが未設定のため、実資格情報による取得成功は含まない。[導入手順](personal-deployment.md#任意iuのunipa通知を追加する)と[レビュー・公開確認](UNIPA_REVIEW_2026-10-06.md)を参照。
+通知Adapterと3ツールは実装・公開済みで、`971807d`のGitHub CIとWorkers Buildsは成功した。2026-10-06の本番確認時点の作者環境ではUNIPAが未設定のため、その記録に実資格情報による取得成功は含まない。[導入手順](personal-deployment.md#任意iuのunipa通知を追加する)と[レビュー・公開確認](UNIPA_REVIEW_2026-10-06.md)を参照。
 
 ## サーバーの境界
 
@@ -32,6 +32,8 @@ src/tools/unipa.ts     3ツール・ローカルフィルター・ページ分�
 ```
 
 ## 認証と一覧取得
+
+`PUBLIC_URL`、`UNIPA_AUTH_REVISION`などの実行時変数と各種SecretsはWorkersのSettingsで管理する。`wrangler.jsonc`には実URL・資格情報を保存せず、`keep_vars: true`でデプロイ時の変数保持を指定する。`OAUTH_KV`と`UNIPA_SNAPSHOTS`のbinding・IDは設定ファイルで管理し、変数保持の対象とは分ける。ローカル開発はGit対象外の`.dev.vars`を使う。
 
 Workerは実行時SecretsからログインIDとパスワードを取得する。先に単一の`ALLOWED_EMAILS`と認証済み本人メールを照合する。ログインフォームのaction、hidden fields、ViewStateを解析し、通常のフォームPOSTで本学UNIPAだけに送る。Cookieは`tough-cookie`のメモリー内jarを使い、Path、Secure、失効、リダイレクトを処理する。外部origin、URL内の資格情報、任意クエリーへの転送を拒否する。
 

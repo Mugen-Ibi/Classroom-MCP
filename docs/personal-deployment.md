@@ -302,7 +302,7 @@ MCPクライアント側の切断だけでGoogle側の許可も取り消され�
 | 7日後に認証が切れる                          | Google OAuthがExternal / Testingなら、MCPクライアントから再接続する                         |
 | Google APIの403                              | Classroom APIが有効か、学生として授業に所属しているか、学校の管理者ポリシー                 |
 | 授業一覧が空                                 | 正しいGoogleアカウントで接続したか。既定ではACTIVEの学生向け授業のみ取得                    |
-| `/health`が503                               | Workerの実行時SecretsにGoogleクライアントIDとシークレットがあるか                           |
+| `/health`が503                               | Workerの実行時変数に`PUBLIC_URL`、実行時SecretsにGoogleクライアントIDとシークレットがあるか |
 | healthはokだが接続時に503                    | Google資格情報の正しさ、`OAUTH_KV`のbindingとID、Worker設定                                 |
 | 締切一覧が不完全                             | `warnings`を確認し、`courseId`を指定して再取得                                              |
 | GitHubからのビルド失敗                       | Node.js 24以上、Worker名、KV ID、ビルド・デプロイコマンド                                   |

@@ -1,6 +1,6 @@
 # ドキュメント案内
 
-更新日：2026-10-06（Asia/Tokyo）。導入・運用には現在の手順と実装文書を使い、調査・レビュー記録はその日付の検証結果として参照してください。
+更新日：2026-10-07（Asia/Tokyo）。導入・運用には現在の手順と実装文書を使い、調査・レビュー記録はその日付の検証結果として参照してください。
 
 ## 現在の構成
 
@@ -8,6 +8,7 @@
 - iUのUNIPA通知は同じMCP内の独立モジュールです。本人のSecrets・専用KV・所有者メール1件を設定し、再接続で`unipa:read`へ同意すると3ツールを追加できます。
 - UNIPAで取得するのは掲示一覧と件名由来の休講・教室変更候補です。本文・添付・出席情報・出席登録・既読更新・回答は対象外です。
 - Google認証情報は`OAUTH_KV`、UNIPA資格情報はWorkers Secrets、UNIPA通知は`UNIPA_SNAPSHOTS`へ分けます。UNIPAのCookieとViewStateは取得処理中のメモリーだけで使います。
+- `PUBLIC_URL`などの実行時変数と認証情報はWorkerのSettingsで管理します。`wrangler.jsonc`には実URL・資格情報を保存せず、`keep_vars: true`でWorkers側の変数をデプロイ後も保持します。Worker名とKVのbinding・IDは引き続き設定ファイルで管理します。ローカル開発はGit対象外の`.dev.vars`を使います。
 
 ## 導入・運用・実装
 
@@ -28,7 +29,7 @@
 | [Classroom設計・性能レビュー](../REVIEW.md)                 | 2026-10-01のClassroom改善と42テスト。現在のUNIPA機能を含む測定ではない                            |
 | [iU内部APIの調査](UNIPA_WEBAPI_INVESTIGATION_2026-10-06.md) | 実装前のAPI拒否・Web/JSF・掲示一覧の観測。ローカルcollector案は採用せず、Worker内の取得へ更新済み |
 
-実装公開コミットは[`971807d`](https://github.com/Mugen-Ibi/Classroom-MCP/commit/971807dc8f8fde27b6635e5f6fdcd45f04626521)。GitHub CIとWorkers Buildsが成功し、作者環境の`/health`は200、認証なしの`/mcp`は401、OAuthメタデータは200を確認しました。同日の不要ブランチ整理後、ローカルとGitHubには`main`だけを残しています。
+2026-10-06の実装公開コミットは[`971807d`](https://github.com/Mugen-Ibi/Classroom-MCP/commit/971807dc8f8fde27b6635e5f6fdcd45f04626521)。GitHub CIとWorkers Buildsが成功し、作者環境の`/health`は200、認証なしの`/mcp`は401、OAuthメタデータは200を確認しました。同日の不要ブランチ整理後、ローカルとGitHubには`main`だけを残しています。
 
 **この確認時点で作者環境のUNIPAは未設定です。** Workerの公開と、本人のUNIPA資格情報による取得成功は別です。Cloudflareからの実ログイン・全件照合・CPU制限・既読状態・通常ログインへの影響は、各自の設定後に直列で検証する必要があります。`/health`が200でもUNIPAの接続成功を意味しません。
 

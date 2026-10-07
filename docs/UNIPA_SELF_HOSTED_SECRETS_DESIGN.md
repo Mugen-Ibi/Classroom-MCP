@@ -1,8 +1,8 @@
 # 公開版UNIPA Adapter：学生別デプロイとWorkers Secrets
 
-更新日：2026-10-06（Asia/Tokyo）。各学生が自分のCloudflareへデプロイする方式を、利用者が指定した。ID／パスワードをWorkers Secretsへ保存する希望により、以前の「UNIPA資格情報はPCのメモリー内だけ」という保持条件を、この方式に限って更新する。ソースの公開と、各自の非公開Secret設定を分ける。
+更新日：2026-10-07（Asia/Tokyo）。各学生が自分のCloudflareへデプロイする方式を、利用者が指定した。ID／パスワードをWorkers Secretsへ保存する希望により、以前の「UNIPA資格情報はPCのメモリー内だけ」という保持条件を、この方式に限って更新する。ソースの公開と、各自の非公開Secret設定を分ける。
 
-本書の設計に基づく通知Adapterと3ツールを実装し、`971807d`でmainへの公開・本番デプロイを確認した。合成データによるworkerd検証を含む79テストは成功。本人のSecretsによるCloudflareからのUNIPA認証は未検証で、公開確認時点の作者環境ではUNIPAが未設定だった。[実装の詳細](UNIPA_IMPLEMENTATION.md)、[学生の設定手順](personal-deployment.md#任意iuのunipa通知を追加する)、[確認記録](UNIPA_REVIEW_2026-10-06.md)を参照。
+本書の設計に基づく通知Adapterと3ツールを実装し、2026-10-06に`971807d`でmainへの公開・本番デプロイを確認した。合成データによるworkerd検証を含む79テストは成功。本人のSecretsによるCloudflareからのUNIPA認証は未検証で、その公開確認時点の作者環境ではUNIPAが未設定だった。[実装の詳細](UNIPA_IMPLEMENTATION.md)、[学生の設定手順](personal-deployment.md#任意iuのunipa通知を追加する)、[確認記録](UNIPA_REVIEW_2026-10-06.md)を参照。
 
 ## 決定
 
@@ -28,6 +28,8 @@
 現行では`ALLOWED_EMAILS`の省略時に複数利用者が各自のClassroomへ接続できる。しかし、Workerに固定したUNIPA資格情報はGoogleログインごとに切り替わらない。UNIPAの所有者制限が未設定／複数メール／本人と不一致なら`OWNER_REQUIRED`で通知の読み取り・ログインを拒否する。認証済みGoogleメールの完全一致を、資格情報の使用・キャッシュの読取より先に確認する。
 
 専用KV `UNIPA_SNAPSHOTS`と非機密の実行時変数`UNIPA_AUTH_REVISION`も使う。revisionは既定`1`で、認証停止後に本人が通常ログインとSecretsを確認してから変更する。同意画面に示したMCP権限は暗号化されたトランザクションに固定し、承認POST時の設定変更によって追加権限を増やさない。Googleへ要求するスコープは変更しない。
+
+実行時変数は`PUBLIC_URL`を含めWorkersのSettingsで管理し、認証情報は同じ画面のSecretへ設定する。`wrangler.jsonc`には実URL・資格情報を保存せず、`keep_vars: true`を維持する。この設定はDashboardの変数をデプロイ時に保持するもので、KVのbinding・IDは引き続き設定ファイルで管理する。ローカルではGit対象外の`.dev.vars`を使う。
 
 ID／パスワードの値はGit、`wrangler.jsonc`の`vars`、公開README、MCPツール引数・結果、HTML、URL、ログへ含めない。Cookie、rx系状態、ViewStateも成果物やログへ出さない。
 
