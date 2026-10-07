@@ -3,7 +3,7 @@ import { authHandler } from "../src/auth";
 import type { Env } from "../src/types";
 
 describe("Bounded consent form", () => {
-  it("does not grant UNIPA when Secrets are enabled after the consent page was shown", async () => {
+  it("freezes Classroom consent without adding later permissions", async () => {
     let pending: { scope: string[] };
     let approvedScope: string[] = [];
     const oauth = {
@@ -38,9 +38,7 @@ describe("Bounded consent form", () => {
       new Request(`${env.PUBLIC_URL}/authorize`),
       env,
     );
-    expect(await consent.text()).not.toContain("unipa:read");
-    env.UNIPA_USER_ID = "synthetic-student";
-    env.UNIPA_PASSWORD = "synthetic-password";
+    expect(await consent.text()).toContain("classroom:read");
     const approved = await authHandler.fetch(
       new Request(`${env.PUBLIC_URL}/authorize`, {
         method: "POST",

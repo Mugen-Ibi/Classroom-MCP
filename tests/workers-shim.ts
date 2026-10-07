@@ -1,2 +1,2 @@
-// Only for Node unit tests. Integration tests execute the real Worker in workerd.
+// Node unit tests only; integration tests execute the actual Worker in workerd.
 export class WorkerEntrypoint {}

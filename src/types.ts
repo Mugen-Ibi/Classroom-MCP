@@ -1,7 +1,7 @@
 import type { OAuthHelpers } from "@cloudflare/workers-oauth-provider";
-import type { UnipaBindings } from "./unipa/types";
 
-export interface Env extends UnipaBindings {
+export interface Env {
+  ALLOWED_EMAILS?: string;
   OAUTH_KV: KVNamespace;
   OAUTH_PROVIDER: OAuthHelpers;
   PUBLIC_URL: string;

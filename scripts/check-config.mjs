@@ -6,13 +6,7 @@ const config = readFileSync(
   new URL("../wrangler.jsonc", import.meta.url),
   "utf8",
 );
-const bindings = [
-  "GOOGLE_CLIENT_ID",
-  "GOOGLE_CLIENT_SECRET",
-  "ALLOWED_EMAILS",
-  "UNIPA_USER_ID",
-  "UNIPA_PASSWORD",
-];
+const bindings = ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "ALLOWED_EMAILS"];
 const found = bindings.filter((name) =>
   new RegExp(`"${name}"\\s*:`).test(config),
 );

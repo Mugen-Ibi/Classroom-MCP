@@ -33,9 +33,6 @@
     "@cloudflare/workers-oauth-provider": "1.2.1",
     "@modelcontextprotocol/server": "2.0.0",
     "agents": "0.24.0",
-    "fast-xml-parser": "5.11.2",
-    "linkedom": "0.18.13",
-    "tough-cookie": "6.0.2",
     "zod": "4.6.5"
   },
   "devDependencies": {
