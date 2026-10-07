@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Miniflare, convertV4MiniflareOptions } from "miniflare";
+import { experimental_readRawConfig } from "wrangler";
 import { s256 } from "../src/google";
 
 const origin = "http://127.0.0.1:8787";
@@ -38,6 +39,17 @@ const send = async (path: string, init?: RequestInit) => {
 };
 
 beforeAll(async () => {
+  const { rawConfig } = experimental_readRawConfig({
+    config: "wrangler.jsonc",
+  });
+  const productionId = rawConfig.kv_namespaces!.find(
+    (binding) => binding.binding === "OAUTH_KV",
+  )!.id;
+  const previewId = rawConfig.previews!.kv_namespaces!.find(
+    (binding) => binding.binding === "OAUTH_KV",
+  )!.id;
+  expect(previewId).toBe("f21f249707d94a7ca218df14ad8f6c3b");
+  expect(previewId).not.toBe(productionId);
   mf = new Miniflare(
     convertV4MiniflareOptions({
       workers: [
@@ -47,11 +59,27 @@ beforeAll(async () => {
           scriptPath: "dist/index.js",
           compatibilityDate: "2026-10-01",
           compatibilityFlags: ["nodejs_compat", "global_fetch_strictly_public"],
-          kvNamespaces: ["OAUTH_KV"],
+          // These IDs name ephemeral local stores; no remote KV is accessed.
+          kvNamespaces: { OAUTH_KV: `fixture-${productionId}` },
           bindings: {
             PUBLIC_URL: origin,
             GOOGLE_CLIENT_ID: "test-client",
             GOOGLE_CLIENT_SECRET: "test-secret",
+          },
+          outboundService: "google-mock",
+        },
+        {
+          name: "preview",
+          modules: true,
+          scriptPath: "dist/index.js",
+          compatibilityDate: "2026-10-01",
+          compatibilityFlags: ["nodejs_compat", "global_fetch_strictly_public"],
+          kvNamespaces: { OAUTH_KV: `fixture-${previewId}` },
+          // Synthetic fixture configuration only, not real preview credentials.
+          bindings: {
+            PUBLIC_URL: origin,
+            GOOGLE_CLIENT_ID: "test-preview-client",
+            GOOGLE_CLIENT_SECRET: "test-preview-secret",
           },
           outboundService: "google-mock",
         },
@@ -202,6 +230,51 @@ describe("Worker OAuth and MCP in workerd", () => {
     refreshToken = issued.refresh_token;
     expect(issued.expires_in).toBeLessThan(3600);
     expect(JSON.stringify(issued)).not.toContain("google-refresh");
+  });
+
+  it("isolates preview OAuth state and rejects production access and refresh tokens", async () => {
+    const productionKv = await mf.getKVNamespace("OAUTH_KV", "classroom");
+    const previewKv = await mf.getKVNamespace("OAUTH_KV", "preview");
+    await productionKv.put("fixture:preview-isolation", "production-only");
+    expect(await previewKv.get("fixture:preview-isolation")).toBeNull();
+    await previewKv.put("fixture:preview-isolation", "preview-only");
+    expect(await productionKv.get("fixture:preview-isolation")).toBe(
+      "production-only",
+    );
+    const grantsBefore = await productionKv.list({ prefix: "grant:" });
+    const grantKey = grantsBefore.keys[0]!.name;
+    const grantBefore = await productionKv.get(grantKey);
+    const preview = await mf.getWorker("preview");
+    const access = await preview.fetch(`${origin}/mcp`, {
+      method: "POST",
+      headers: {
+        Host: new URL(origin).host,
+        Authorization: `Bearer ${mcpToken}`,
+        "Content-Type": "application/json",
+        Accept: "application/json, text/event-stream",
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 88, method: "tools/list" }),
+    });
+    expect(access.status).toBe(401);
+    const refreshed = await preview.fetch(`${origin}/oauth/token`, {
+      method: "POST",
+      headers: {
+        Host: new URL(origin).host,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({
+        grant_type: "refresh_token",
+        refresh_token: refreshToken,
+        client_id: clientId,
+        resource: `${origin}/mcp`,
+      }).toString(),
+    });
+    expect(refreshed.status).toBe(401);
+    expect(await refreshed.json()).toMatchObject({ error: "invalid_client" });
+    expect(await previewKv.list({ prefix: "grant:" })).toMatchObject({
+      keys: [],
+    });
+    expect(await productionKv.get(grantKey)).toBe(grantBefore);
   });
 
   it("lists five read-only tools and reads Classroom through an authenticated MCP call", async () => {

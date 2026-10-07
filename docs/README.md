@@ -7,6 +7,7 @@
 | [README](../README.md)                       | ツール、制限、Google OAuth、データの扱い                   |
 | [個人デプロイガイド](personal-deployment.md) | 本人の Worker への導入と更新                               |
 | [分離と移行](service-separation.md)          | 既存接続を保つ条件、別サービスの新規接続、未実施の外部操作 |
+| [Preview](preview.md)                        | 専用 OAuth KV の分離と、実認証に必要な別設定               |
 | [設計・性能レビュー](../REVIEW.md)           | 2026-10-01 の測定と設計判断                                |
 | [ロゴ制作記録](../design/README.md)          | 配信用アセットの制作記録                                   |
 

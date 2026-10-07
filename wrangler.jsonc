@@ -18,6 +18,17 @@
       "id": "50886f599f7d48398a628e13f564600c",
     },
   ],
+  // Preview authentication is isolated from the production OAuth namespace.
+  // PUBLIC_URL and preview OAuth Secrets must be configured separately.
+  "previews": {
+    "kv_namespaces": [
+      {
+        "binding": "OAUTH_KV",
+        "id": "f21f249707d94a7ca218df14ad8f6c3b",
+      },
+    ],
+    "observability": { "enabled": false },
+  },
   "observability": {
     "enabled": false,
   },
