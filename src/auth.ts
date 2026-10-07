@@ -8,6 +8,7 @@ import {
 import { exchangeGoogleCode, googleAuthorizeUrl, s256 } from "./google";
 import type { Env } from "./types";
 import { UNIPA_SCOPE, unipaEnabled } from "./unipa/config";
+import { monitorEnabled, UNIPA_MONITOR_SCOPE } from "./unipa/monitor-worker";
 
 export const MCP_SCOPE = "classroom:read";
 
@@ -51,6 +52,7 @@ export function consentPage(
   details: ConsentDescription,
   handle: string,
   unipa = false,
+  monitor = false,
 ): string {
   return `<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><link rel="icon" type="image/png" href="/favicon.png"><title>Classroom MCP 接続の許可</title></head><body>
 <img src="/icon-128.png" width="64" height="64" alt="Classroom MCP">
@@ -61,6 +63,7 @@ export function consentPage(
 ${details.redirectIsLoopback ? "<p>コンピューター内のアプリに接続権限を渡します。自分で開始した接続であることを確認してください。</p>" : ""}
 <p>許可する権限: ${MCP_SCOPE}（授業、公開済み課題、添付資料へのリンク、自分の提出状況の読み取り）</p>
 ${unipa ? `<p>追加で許可する権限: ${UNIPA_SCOPE}（本人用UNIPA通知の読み取り）。接続先アプリはUNIPAの掲示一覧（件名・カテゴリ・差出人・掲示日・未読状態）と、件名由来の休講・教室変更候補を読み取れます。本文と出席情報は取得しません。通知一覧は本人のWorkerに最大24時間保存します。</p>` : ""}
+${monitor ? `<p>追加で許可する権限: ${UNIPA_MONITOR_SCOPE}（本人用UNIPAの自動監視）。日本時間07:00・12:00・17:00に掲示を確認し（02:00–05:00は通信停止）、、重大な未読通知候補の本文を設定に応じて取得します。本文取得でUNIPA側が既読になる場合があります。本文は本人のWorkerに最大24時間、差分と配信状態は最大30日保存します。イベント購読時に指定された検証済みChatGPT受信先へ、件名等の短い通知を送ります。既読状態と、AIの判定・通知完了は別に扱います。</p>` : ""}
 <p>次の画面でGoogleアカウントを選択し、読み取り権限を許可します。接続の継続にはGoogleのオフラインアクセスを使用します。</p>
 <form method="post" action="/authorize"><input type="hidden" name="handle" value="${escapeHtml(handle)}">
 <button name="decision" value="approve">許可してGoogleへ</button> <button name="decision" value="deny">拒否</button></form>
@@ -120,6 +123,7 @@ export const authHandler = {
           authRequest.scope = [
             MCP_SCOPE,
             ...(unipaEnabled(env) ? [UNIPA_SCOPE] : []),
+            ...(monitorEnabled(env) ? [UNIPA_MONITOR_SCOPE] : []),
             "offline_access",
           ];
           const details = await oauth.describeConsent(authRequest);
@@ -134,6 +138,7 @@ export const authHandler = {
               details,
               consent.handle,
               authRequest.scope.includes(UNIPA_SCOPE),
+              authRequest.scope.includes(UNIPA_MONITOR_SCOPE),
             ),
             {
               headers: consent.headers,

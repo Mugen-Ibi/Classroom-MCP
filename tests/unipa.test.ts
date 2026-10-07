@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
-import { collectNotices, parseNotices } from "../src/unipa/notices";
+import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
+import { collectNotices, parseNotices, digest } from "../src/unipa/notices";
 import { UnipaSession, unipaUrl, type Transport } from "../src/unipa/session";
 import { applyPartial, form, html } from "../src/unipa/jsf";
 import { scheduleChanges } from "../src/unipa/changes";
@@ -17,6 +17,13 @@ import {
   rows,
   tabId,
 } from "./unipa-fixtures";
+
+beforeEach(() => {
+  vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-10-07T03:00:00Z"));
+});
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 const credentials = {
   userId: "synthetic-student-id",
@@ -380,140 +387,77 @@ describe("UNIPA owner/cache policy", () => {
       "CONFIG_REQUIRED",
     );
   });
-  it("returns fresh cache, status performs no login, and stored data excludes all credentials/states", async () => {
-    const store = memoryKv(),
-      flow = scriptedFlow();
-    const service = new UnipaService(
-      store.env,
-      owner,
+  async function seed(store: ReturnType<typeof memoryKv>) {
+    const flow = scriptedFlow();
+    const snapshot = await collectNotices(
+      credentials,
       undefined,
       flow.transport,
     );
-    expect((await service.status()).lastSuccessAt).toBe(null);
-    expect(flow.fetcher).not.toHaveBeenCalled();
+    const key =
+      "unipa:v1:" +
+      (await digest(JSON.stringify([owner.userId, credentials.userId, "1"])));
+    store.values.set(key, JSON.stringify(snapshot));
+    return { key, snapshot };
+  }
+  it("serves scheduled cache without login and excludes credentials and form states", async () => {
+    const store = memoryKv();
+    await seed(store);
+    const transport = vi.fn();
+    const service = new UnipaService(store.env, owner, undefined, transport);
+    expect((await service.status()).lastSuccessAt).not.toBe(null);
     expect((await service.list()).stale).toBe(false);
     expect((await service.list()).totalCount).toBe(38);
-    expect(flow.fetcher).toHaveBeenCalledTimes(5);
-    const saved = JSON.stringify([...store.values]);
+    expect(transport).not.toHaveBeenCalled();
     for (const secret of [
       credentials.userId,
       credentials.password,
-      owner.email,
       owner.accessToken,
-      "synthetic-session",
       "synthetic-rx",
-      "synthetic-tab-state",
       "javax.faces",
-      "loginForm",
     ])
-      expect(saved).not.toContain(secret);
+      expect(JSON.stringify([...store.values])).not.toContain(secret);
   });
-  it("keeps the last success stale on failure and does not replace it with zero", async () => {
+  it("returns stale data at the next scheduled slot without a tool-triggered refresh", async () => {
     const store = memoryKv(),
-      flow = scriptedFlow();
-    await new UnipaService(store.env, owner, undefined, flow.transport).list();
-    const key = [...store.values.keys()].find(
-      (k) => !k.endsWith(":lease") && !k.endsWith(":state"),
-    )!;
-    const prior = JSON.parse(store.values.get(key)!);
-    vi.spyOn(Date, "now").mockReturnValue(Date.now() + 16 * 60_000);
-    const failed = vi.fn(async () => {
-      throw new Error(`private ${credentials.password}`);
-    });
-    const service = new UnipaService(
+      { key, snapshot } = await seed(store);
+    const transport = vi.fn();
+    vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-10-07T08:00:00Z"));
+    const result = await new UnipaService(
       store.env,
       owner,
       undefined,
-      failed as unknown as Transport,
-    );
-    const result = await service.list();
+      transport,
+    ).list();
     expect(result.stale).toBe(true);
     expect(result.totalCount).toBe(38);
-    expect(result.warnings).toEqual(["NETWORK_ERROR"]);
-    expect(store.values.get(key)).toBe(JSON.stringify(prior));
-    await service.list();
-    expect(failed).toHaveBeenCalledTimes(1);
+    expect(store.values.get(key)).toBe(JSON.stringify(snapshot));
+    expect(transport).not.toHaveBeenCalled();
   });
-  it.each([
-    [loginHtml, "AUTH_REJECTED"],
-    ["<html>認証コードを入力してください</html>", "INTERACTIVE_AUTH_REQUIRED"],
-  ])(
-    "pauses rejected/interactive authentication until the owner changes revision",
-    async (login, code) => {
-      const store = memoryKv(),
-        flow = scriptedFlow({ login });
-      const service = new UnipaService(
-        store.env,
-        owner,
-        undefined,
-        flow.transport,
-      );
-      await expect(service.list()).rejects.toMatchObject({ code });
-      await expect(service.list()).rejects.toMatchObject({ code });
-      expect(flow.fetcher).toHaveBeenCalledTimes(2);
-      expect((await service.status()).automaticRetryPaused).toBe(true);
-      store.env.UNIPA_AUTH_REVISION = "2";
-      const fixed = scriptedFlow();
-      expect(
-        (
-          await new UnipaService(
-            store.env,
-            owner,
-            undefined,
-            fixed.transport,
-          ).list()
-        ).totalCount,
-      ).toBe(38);
-    },
-  );
-  it("shares concurrent refreshes within one isolate", async () => {
-    const store = memoryKv(),
-      flow = scriptedFlow();
-    const [first, second] = await Promise.all([
-      new UnipaService(store.env, owner, undefined, flow.transport).list(),
-      new UnipaService(store.env, owner, undefined, flow.transport).list(),
-    ]);
-    expect(first.notices).toEqual(second.notices);
-    expect(flow.fetcher).toHaveBeenCalledTimes(5);
-  });
-  it("persists an immediate auth rejection without multiple writes to the same KV key", async () => {
-    const store = memoryKv(),
-      flow = scriptedFlow({ login: loginHtml });
-    const put = store.kv.put.bind(store.kv);
-    const writes = new Set<string>();
-    store.kv.put = vi.fn(async (key, value, options) => {
-      if (writes.has(key)) throw new Error("Synthetic KV per-key write limit");
-      writes.add(key);
-      await put(key, value, options);
-    });
-    const service = new UnipaService(
-      store.env,
-      owner,
-      undefined,
-      flow.transport,
-    );
-    await expect(service.list()).rejects.toMatchObject({
-      code: "AUTH_REJECTED",
-    });
-    expect((await service.status()).automaticRetryPaused).toBe(true);
-    expect(writes.size).toBe(2);
-  });
-  it("does not return expired snapshots or a false empty list after 24 hours", async () => {
-    const store = memoryKv(),
-      flow = scriptedFlow();
-    await new UnipaService(store.env, owner, undefined, flow.transport).list();
-    vi.spyOn(Date, "now").mockReturnValue(Date.now() + 25 * 3600_000);
-    const failed = vi.fn(async () => {
-      throw new Error("Synthetic offline");
-    });
+  it("reads cache during maintenance and fails safely if no snapshot is available", async () => {
+    const store = memoryKv();
+    await seed(store);
+    const transport = vi.fn();
+    vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-10-07T17:00:00Z"));
+    expect(
+      (await new UnipaService(store.env, owner, undefined, transport).list())
+        .totalCount,
+    ).toBe(38);
+    store.values.clear();
     await expect(
-      new UnipaService(
-        store.env,
-        owner,
-        undefined,
-        failed as unknown as Transport,
-      ).list(),
-    ).rejects.toMatchObject({ code: "NETWORK_ERROR" });
+      new UnipaService(store.env, owner, undefined, transport).list(),
+    ).rejects.toMatchObject({ code: "MAINTENANCE_WINDOW" });
+    expect(transport).not.toHaveBeenCalled();
+  });
+  it("does not return expired snapshots or synthesize an empty list", async () => {
+    const store = memoryKv();
+    await seed(store);
+    const transport = vi.fn();
+    vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-10-08T08:00:00Z"));
+    await expect(
+      new UnipaService(store.env, owner, undefined, transport).list(),
+    ).rejects.toMatchObject({ code: "OUTSIDE_FETCH_WINDOW" });
+    expect(transport).not.toHaveBeenCalled();
   });
   it("fails closed before login when the notification KV cannot be read", async () => {
     const store = memoryKv();

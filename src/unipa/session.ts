@@ -1,5 +1,6 @@
 import { CookieJar } from "tough-cookie";
 import { UNIPA_ORIGIN, UnipaError } from "./types";
+import { assertUnipaRequestAllowed } from "./polling";
 
 export type Transport = typeof fetch;
 export interface Page {
@@ -40,6 +41,7 @@ export class UnipaSession {
     let url = unipaUrl(path);
     let body = fields?.toString();
     for (let redirects = 0; redirects <= 5; redirects++) {
+      assertUnipaRequestAllowed(); // Every HTTP request, including redirects/detail/backfill.
       if (
         ++this.requests > 30 ||
         Date.now() - this.startedAt > 120_000 ||

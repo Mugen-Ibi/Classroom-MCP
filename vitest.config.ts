@@ -3,6 +3,10 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   resolve: {
     alias: {
+      "cloudflare:sockets": new URL(
+        "./tests/sockets-shim.ts",
+        import.meta.url,
+      ).pathname.replace(/^\/(\w:)/, "$1"),
       "cloudflare:workers": new URL(
         "./tests/workers-shim.ts",
         import.meta.url,

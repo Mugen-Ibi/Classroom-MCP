@@ -1,10 +1,9 @@
 import { z } from "zod";
 import { unipaConfig } from "./config";
-import { collectNotices, digest } from "./notices";
+import { digest } from "./notices";
 import {
   UNIPA_PORTAL,
   UnipaError,
-  permanentFailure,
   safeError,
   type ErrorCode,
   type Snapshot,
@@ -12,8 +11,8 @@ import {
   type UnipaOwner,
 } from "./types";
 import type { Transport } from "./session";
+import { snapshotFreshUntil, unipaMaintenance } from "./polling";
 
-const freshMs = 15 * 60_000;
 const ttl = 24 * 3600;
 const snapshotSchema = z
   .object({
@@ -51,8 +50,12 @@ const stateSchema = z.object({
   ]),
   retryAt: z.number().finite().nullable(),
 });
-type State = z.infer<typeof stateSchema>;
-const inFlight = new WeakMap<object, Map<string, Promise<Snapshot>>>();
+export type SnapshotResult = Snapshot & {
+  cacheExpiresAt: string;
+  stale: boolean;
+  warnings: string[];
+  officialUrl: string;
+};
 
 export class UnipaService {
   constructor(
@@ -60,6 +63,10 @@ export class UnipaService {
     private readonly owner: UnipaOwner,
     private readonly signal?: AbortSignal,
     private readonly transport?: Transport,
+    private readonly monitor?: {
+      list(): Promise<SnapshotResult>;
+      status(): Promise<Record<string, unknown>>;
+    },
   ) {}
 
   private async storage() {
@@ -103,34 +110,10 @@ export class UnipaService {
       throw new UnipaError("CACHE_UNAVAILABLE");
     }
   }
-  private async writeState(kv: KVNamespace, key: string, state: State) {
-    // Separate lease/error keys avoid KV's one-write-per-key-per-second limit.
-    const target =
-      state.code === "UPDATE_PENDING" ? `${key}:lease` : `${key}:state`;
-    try {
-      await kv.put(
-        target,
-        JSON.stringify(state),
-        state.retryAt === null
-          ? {}
-          : {
-              expirationTtl:
-                state.code === "UPDATE_PENDING"
-                  ? 120
-                  : Math.max(
-                      ttl,
-                      Math.ceil((state.retryAt - Date.now()) / 1000),
-                    ),
-            },
-      );
-    } catch {
-      throw new UnipaError("CACHE_UNAVAILABLE");
-    }
-  }
-
   async status() {
     try {
       const { kv, key } = await this.storage();
+      if (this.monitor) return await this.monitor.status();
       const { snapshot, state } = await this.read(kv, key);
       return {
         enabled: true,
@@ -138,7 +121,7 @@ export class UnipaService {
         authenticated: null,
         lastSuccessAt: snapshot?.fetchedAt ?? null,
         stale:
-          !snapshot || Date.now() - Date.parse(snapshot.fetchedAt) >= freshMs,
+          !snapshot || Date.now() >= snapshotFreshUntil(snapshot.fetchedAt),
         complete: snapshot?.complete ?? false,
         totalCount: snapshot?.totalCount ?? null,
         reason: state?.code ?? null,
@@ -159,73 +142,31 @@ export class UnipaService {
     }
   }
 
-  async list() {
+  async list(): Promise<SnapshotResult> {
     const config = await this.storage();
+    if (this.monitor) return this.monitor.list();
     const { snapshot, state } = await this.read(config.kv, config.key);
-    if (snapshot && Date.now() - Date.parse(snapshot.fetchedAt) < freshMs)
-      return this.result(snapshot, false, []);
-    let pending = inFlight.get(config.kv);
-    if (!pending) {
-      pending = new Map();
-      inFlight.set(config.kv, pending);
-    }
-    let update = pending.get(config.key);
-    const blocked =
-      state && (state.retryAt === null || state.retryAt > Date.now());
-    if (blocked && !update) {
-      if (snapshot) return this.result(snapshot, true, [state.code]);
-      throw new UnipaError(state.code);
-    }
-    if (!update) {
-      update = (async () => {
-        // KV is not a distributed lock. This lease limits ordinary duplicate refreshes.
-        await this.writeState(config.kv, config.key, {
-          code: "UPDATE_PENDING",
-          retryAt: Date.now() + 120_000,
-        });
-        try {
-          const result = await collectNotices(
-            config,
-            this.signal,
-            this.transport,
-          );
-          try {
-            await config.kv.put(config.key, JSON.stringify(result), {
-              expirationTtl: ttl,
-            });
-            await config.kv.delete(`${config.key}:state`);
-          } catch {
-            throw new UnipaError("CACHE_UNAVAILABLE");
-          }
-          return result;
-        } catch (error) {
-          const safe = safeError(error);
-          if (safe.code !== "CACHE_UNAVAILABLE")
-            await this.writeState(config.kv, config.key, {
-              code: safe.code as State["code"],
-              retryAt: permanentFailure(safe.code)
-                ? null
-                : Date.now() + safe.retryAfterSeconds * 1000,
-            });
-          throw safe;
-        }
-      })();
-      pending.set(config.key, update);
-    }
-    try {
-      return this.result(await update, false, []);
-    } catch (error) {
-      if (snapshot) return this.result(snapshot, true, [safeError(error).code]);
-      throw safeError(error);
-    } finally {
-      if (pending.get(config.key) === update) pending.delete(config.key);
-    }
+    // Tools only read caches. The authorized Durable Object's scheduled collector
+    // is the sole production refresh path; old grants cannot trigger extra logins.
+    if (snapshot)
+      return this.result(
+        snapshot,
+        Date.now() >= snapshotFreshUntil(snapshot.fetchedAt),
+        state ? [state.code] : [],
+      );
+    throw new UnipaError(
+      unipaMaintenance() ? "MAINTENANCE_WINDOW" : "OUTSIDE_FETCH_WINDOW",
+    );
   }
-  private result(snapshot: Snapshot, stale: boolean, warnings: ErrorCode[]) {
+  private result(
+    snapshot: Snapshot,
+    stale: boolean,
+    warnings: ErrorCode[],
+  ): SnapshotResult {
     return {
       ...snapshot,
       cacheExpiresAt: new Date(
-        Date.parse(snapshot.fetchedAt) + freshMs,
+        snapshotFreshUntil(snapshot.fetchedAt),
       ).toISOString(),
       stale,
       warnings,

@@ -17,7 +17,9 @@ export interface GoogleGrant {
   refreshToken: string;
 }
 
-export type GoogleAccess = Omit<GoogleGrant, "refreshToken">;
+export type GoogleAccess = Omit<GoogleGrant, "refreshToken"> & {
+  grantId?: string;
+};
 
 export interface Course {
   id: string;

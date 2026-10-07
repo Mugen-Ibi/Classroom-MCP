@@ -131,6 +131,15 @@ export async function collectNotices(
   signal?: AbortSignal,
   transport?: Transport,
 ): Promise<Snapshot> {
+  return (await collectNoticeBoard(credentials, signal, transport)).snapshot;
+}
+
+// Ephemeral collector context only: never serialize DOM, session or form state.
+export async function collectNoticeBoard(
+  credentials: { userId: string; password: string },
+  signal?: AbortSignal,
+  transport?: Transport,
+) {
   const session = new UnipaSession(signal, transport);
   let page = await session.request(UNIPA_PORTAL);
   let doc = html(page.body);
@@ -255,11 +264,12 @@ export async function collectNotices(
     (total === 0 && !zero && unique[0] !== 0)
   )
     throw new UnipaError("INCOMPLETE_LIST");
-  return {
+  const snapshot: Snapshot = {
     schemaVersion: 1,
-    fetchedAt: new Date().toISOString(),
+    fetchedAt: new Date(Date.now()).toISOString(),
     totalCount: total,
     complete: true,
     notices,
   };
+  return { snapshot, session, doc, pageUrl: page.url, panelId: tab.panelId };
 }

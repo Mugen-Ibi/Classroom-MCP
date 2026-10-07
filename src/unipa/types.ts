@@ -7,6 +7,15 @@ export interface UnipaBindings {
   UNIPA_PASSWORD?: string;
   UNIPA_AUTH_REVISION?: string;
   UNIPA_SNAPSHOTS?: KVNamespace;
+  UNIPA_MONITOR?: DurableObjectNamespace;
+  UNIPA_MONITOR_ENABLED?: string;
+  UNIPA_BODY_ENABLED?: string;
+  UNIPA_BACKFILL_ENABLED?: string;
+  UNIPA_MONITOR_ALLOW_READ_STATE_CHANGE?: string;
+  UNIPA_IMPORTANCE_POLICY?: string;
+  UNIPA_EVENT_CALLBACK_HOSTS?: string;
+  UNIPA_WEBHOOK_EGRESS?: Fetcher;
+  UNIPA_EVENT_DIRECT_EGRESS?: "pinned_socket";
 }
 export interface UnipaOwner {
   userId: string;
@@ -44,9 +53,15 @@ export type ErrorCode =
   | "NETWORK_ERROR"
   | "RATE_LIMITED"
   | "CACHE_UNAVAILABLE"
-  | "UPDATE_PENDING";
+  | "UPDATE_PENDING"
+  | "MAINTENANCE_WINDOW"
+  | "OUTSIDE_FETCH_WINDOW";
 
 const messages: Record<ErrorCode, string> = {
+  MAINTENANCE_WINDOW:
+    "UNIPAの保守時間帯（日本時間02:00–05:00）のため通信を停止しています。キャッシュは参照できます。",
+  OUTSIDE_FETCH_WINDOW:
+    "UNIPA取得は日本時間07:00・12:00・17:00の枠に限定しています。キャッシュは参照できます。",
   CONFIG_REQUIRED: "UNIPAの両Secretと専用KVの設定を確認してください。",
   OWNER_REQUIRED: "UNIPAはALLOWED_EMAILSに指定した本人1名だけが利用できます。",
   AUTH_REJECTED:

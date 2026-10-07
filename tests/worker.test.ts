@@ -43,8 +43,10 @@ beforeAll(async () => {
       workers: [
         {
           name: "classroom",
-          modules: true,
-          scriptPath: "dist/index.js",
+          modules: [
+            { type: "ESModule", path: "tests/worker-entry.js" },
+            { type: "ESModule", path: "dist/index.js" },
+          ],
           compatibilityDate: "2026-10-01",
           compatibilityFlags: ["nodejs_compat", "global_fetch_strictly_public"],
           kvNamespaces: ["OAUTH_KV"],
@@ -66,8 +68,10 @@ beforeAll(async () => {
         },
         {
           name: "unipa-enabled",
-          modules: true,
-          scriptPath: "dist/index.js",
+          modules: [
+            { type: "ESModule", path: "tests/worker-entry.js" },
+            { type: "ESModule", path: "dist/index.js" },
+          ],
           compatibilityDate: "2026-10-01",
           compatibilityFlags: ["nodejs_compat", "global_fetch_strictly_public"],
           kvNamespaces: ["OAUTH_KV", "UNIPA_SNAPSHOTS"],
@@ -83,8 +87,10 @@ beforeAll(async () => {
         },
         {
           name: "unconfigured",
-          modules: true,
-          scriptPath: "dist/index.js",
+          modules: [
+            { type: "ESModule", path: "tests/worker-entry.js" },
+            { type: "ESModule", path: "dist/index.js" },
+          ],
           compatibilityDate: "2026-10-01",
           compatibilityFlags: ["nodejs_compat", "global_fetch_strictly_public"],
           kvNamespaces: ["OAUTH_KV"],
@@ -494,6 +500,26 @@ describe("Worker OAuth and MCP in workerd", () => {
       arguments: {},
     });
     expect(JSON.parse(before.content[0].text).lastSuccessAt).toBe(null);
+    const { digest, parseNotices } = await import("../src/unipa/notices");
+    const { html } = await import("../src/unipa/jsf");
+    const { boardHtml, panelId } = await import("./unipa-fixtures.js");
+    const notices = await parseNotices(
+      html(boardHtml(38, 38, true, false)).getElementById(panelId)!,
+    );
+    const kv = await mf.getKVNamespace("UNIPA_SNAPSHOTS", "unipa-enabled");
+    const key =
+      "unipa:v1:" +
+      (await digest(JSON.stringify(["user1", "synthetic-student-id", "1"])));
+    await kv.put(
+      key,
+      JSON.stringify({
+        schemaVersion: 1,
+        fetchedAt: "2026-10-07T03:00:00Z",
+        totalCount: 38,
+        complete: true,
+        notices,
+      }),
+    );
     const result = await call("tools/call", {
       name: "unipa_list_announcements",
       arguments: { limit: 20 },
@@ -512,7 +538,7 @@ describe("Worker OAuth and MCP in workerd", () => {
     expect(data.notices).toHaveLength(20);
     expect(data.nextOffset).toBe(20);
     expect(data.stale).toBe(false);
-    expect(trace).toHaveLength(5);
+    expect(trace).toHaveLength(0);
     const rest = await call("tools/call", {
       name: "unipa_list_announcements",
       arguments: { offset: 20, limit: 20 },
