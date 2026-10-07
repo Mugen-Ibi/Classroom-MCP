@@ -2,7 +2,7 @@
 
 自分のCloudflare Workerを作成し、自分のGoogleアカウントでClassroomを読む手順です。Google OAuthクライアント、Worker、KVは各自で用意します。作者のWorkerや資格情報を利用する必要はありません。
 
-更新日：2026-10-06。iUの学生向けUNIPA通知は任意で追加できます。Classroomの接続を確認してから「UNIPA通知を追加する」へ進んでください。[実装・検証記録](README.md)は導入手順と分けて参照できます。
+更新日：2026-10-07。iUの学生向けUNIPA通知は任意で追加できます。Classroomの接続を確認してから「UNIPA通知を追加する」へ進んでください。[実装・検証記録](README.md)は導入手順と分けて参照できます。
 
 ## 事前に確認すること
 
@@ -50,22 +50,20 @@ npx wrangler kv namespace create OAUTH_KV
 | 項目                                | 設定内容                                      |
 | ----------------------------------- | --------------------------------------------- |
 | `name`                              | 自分のWorker名。このガイドでは`classroom-mcp` |
-| `vars.PUBLIC_URL`                   | 自分のWorkerのHTTPS URL。末尾のスラッシュなし |
+| `keep_vars`                         | `true`。Workers側で設定した実行時変数を保持   |
 | `kv_namespaces`内の`OAUTH_KV`の`id` | 今作成したKVのID                              |
 
 該当箇所は次の形になります。これは設定の抜粋です。ファイル全体を置き換えず、他の項目は保持してください。
 
 ```jsonc
 "name": "classroom-mcp",
-"vars": {
-  "PUBLIC_URL": "https://classroom-mcp.your-subdomain.workers.dev"
-},
+"keep_vars": true,
 "kv_namespaces": [
   { "binding": "OAUTH_KV", "id": "YOUR_KV_NAMESPACE_ID" }
 ]
 ```
 
-元のファイルの作者用URL・KV IDをそのまま使わないでください。`OAUTH_KV`というbinding名はコードが参照するため変更しません。Worker名を変えた場合はURLの先頭も合わせます。
+元のファイルの作者用KV IDをそのまま使わないでください。`OAUTH_KV`というbinding名はコードが参照するため変更しません。Worker名を変えた場合はURLの先頭も合わせます。実際の公開URLはGitへ保存せず、初回デプロイ後にWorkers側で設定します。
 
 チェック後、初回デプロイを行います。
 
@@ -74,7 +72,7 @@ npm run check
 npm run deploy
 ```
 
-Wranglerが表示したWorker URLと`PUBLIC_URL`が一致することを確認します。GoogleのSecretsが未設定なので、この段階では`/health`と認可開始が503になるのが正常です。URLが想定と異なった場合は`PUBLIC_URL`を修正し、再デプロイしてから先へ進んでください。
+初回デプロイ後、Dashboardの **Workers & Pages → 自分のWorker → Settings → Variables and Secrets** で、実行時変数`PUBLIC_URL`をWranglerが表示したWorkerのHTTPS URLに設定します。末尾にスラッシュを付けず、変更を反映してください。非機密のText変数として設定できます。実行時Secretとして管理することも可能です。GoogleのSecretsが未設定なので、この段階では`/health`と認可開始が503になるのが正常です。
 
 ## 3. Google OAuthを設定する
 
@@ -124,7 +122,7 @@ UNIPAを追加する場合は、この値を本人のGoogleメールアドレス
 
 Dashboardから設定する場合は、Workers & Pages → 自分のWorker → Settings → Variables & Secretsに**実行時Secret**として追加します。Workers Buildsのビルド専用変数ではありません。`.dev.vars`はローカル用で、本番Secretsの代わりにはなりません。
 
-`wrangler.jsonc`にはWorker名・URL・KVのbindingなどの非機密設定だけを保存し、Gitで管理してください。ファイル全体を除外すると、新しいcloneやWorkers Buildsで設定を読み込めなくなります。追跡済みファイルは`.gitignore`に追加しても追跡が続きます。認証情報のキーが混入した場合は`npm run check:config`がCI・ビルド・デプロイを停止します。
+`wrangler.jsonc`にはWorker名・KVのbindingなどの非機密設定を保存し、Gitで管理してください。実行時変数はWorkers側で管理し、`keep_vars: true`を保持します。ファイル全体を除外すると、新しいcloneやWorkers Buildsで設定を読み込めなくなります。追跡済みファイルは`.gitignore`に追加しても追跡が続きます。認証情報のキーが混入した場合は`npm run check:config`がCI・ビルド・デプロイを停止します。
 
 秘密情報をコミットした場合は、まず対象サービスでパスワード変更・資格情報の再発行を行い、新しい値をWorkerの実行時Secretsへ設定してください。履歴の書き換えだけでは漏えいした資格情報を無効化できません。GitHubのキャッシュやFork、既存cloneにも残り得るため、[GitHubの削除手順](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/removing-sensitive-data-from-a-repository)も確認してください。
 
@@ -205,7 +203,7 @@ UNIPAは件名・カテゴリ・差出人・掲示日・未読状態・重要表
 
 ## 更新する
 
-まず、変更した`wrangler.jsonc`を自分のForkへ保存します。URLとKV IDはSecretではありませんが、Googleクライアントシークレット、UNIPAのID・パスワード、トークン、`.dev.vars`はコミットしないでください。
+まず、変更した`wrangler.jsonc`を自分のForkへ保存します。実際の公開URLはWorkers側の`PUBLIC_URL`で管理します。KV IDはSecretではありません。Googleクライアントシークレット、UNIPAのID・パスワード、トークン、`.dev.vars`はコミットしないでください。
 
 ```bash
 git add wrangler.jsonc
@@ -226,7 +224,7 @@ git fetch upstream
 git merge upstream/main
 ```
 
-競合があれば解消し、`wrangler.jsonc`のWorker名・URL・KV IDが自分の設定のままか確認します。その後、チェックとデプロイを行います。
+競合があれば解消し、`wrangler.jsonc`のWorker名・KV IDが自分の設定のままで、`keep_vars: true`が維持されているか確認します。その後、チェックとデプロイを行います。
 
 ```bash
 npm ci
@@ -246,7 +244,7 @@ UNIPAを使っている場合は`UNIPA_SNAPSHOTS`のbindingとIDも維持しま�
 1. 本人が[公式UNIPA](https://unipa.i-u.ac.jp/uprx/)で通常ログインし、パスワード・追加認証・アカウント状態を確認します。
 2. 必要なら本人のWorkerのUNIPA Secretsを修正します。
 3. Workerの非機密の実行時変数`UNIPA_AUTH_REVISION`を前回と異なる値へ変更します。既定は`1`なので、最初の再開なら例として`2`を使えます。英数字・`_`・`-`の1～64文字で、資格情報を含めません。
-4. `wrangler.jsonc`の`vars`で管理する場合は、その値を保存して再デプロイします。Dashboardで設定する場合も次回デプロイする設定と一致させます。ビルド専用変数ではありません。
+4. DashboardのWorkerの実行時変数で変更を反映します。`keep_vars: true`により、次回デプロイ時もその値を保持します。ビルド専用変数ではありません。
 5. 状態を確認してから一覧取得を1回試し、公式一覧と照合します。認証失敗を繰り返すためにrevisionを変えないでください。
 
 通信失敗・セッション失効・画面変更は最低5分、429/503は`Retry-After`以上の更新間隔があります。`retryAt`まで待ち、`stale`の結果は過去の成功として扱います。画面変更や件数不一致は、ログイン再開のためのrevision変更で解決するとは限りません。
@@ -263,7 +261,7 @@ UNIPAを使っている場合は`UNIPA_SNAPSHOTS`のbindingとIDも維持しま�
 | デプロイコマンド   | `npx wrangler deploy` |
 | ビルド環境変数     | `NODE_VERSION=24`     |
 
-Cloudflare上のWorker名とForkの`wrangler.jsonc`の`name`を一致させます。Forkに自分のURLとKV IDを保存してから接続してください。GoogleのSecretsは引き続きWorkerの実行時Secretに設定します。
+Cloudflare上のWorker名とForkの`wrangler.jsonc`の`name`を一致させます。Forkに自分のKV IDを保存し、`PUBLIC_URL`を含む実行時変数をWorker側に設定してから接続してください。`keep_vars: true`を維持し、GoogleのSecretsは引き続きWorkerの実行時Secretに設定します。
 
 リポジトリにはPRとmainへのpushでチェックを行うGitHub Actionsもあります。これはWorkers Buildsとは別で、Workerのデプロイを行いません。Workers Buildsを使う構成では、GitHub側にCloudflare APIトークンを追加する必要はありません。
 

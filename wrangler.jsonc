@@ -10,6 +10,8 @@
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
   "workers_dev": true,
   "preview_urls": false,
+  // Runtime variables are managed in Workers Settings, including PUBLIC_URL.
+  "keep_vars": true,
   "kv_namespaces": [
     {
       "binding": "OAUTH_KV",
@@ -20,8 +22,5 @@
   ],
   "observability": {
     "enabled": false,
-  },
-  "vars": {
-    "PUBLIC_URL": "https://classroom-mcp.ibimugen.workers.dev",
   },
 }
