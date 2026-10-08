@@ -1,5 +1,8 @@
 # Google Classroom Readonly MCP
 
+MCP refresh token の再利用期限と KV 整合性の制約は
+[refresh token rotation](docs/refresh-token-rotation.md) を参照してください。
+
 <img src="public/icon-128.png" width="80" height="80" alt="Classroom MCP">
 
 このリポジトリを自分のCloudflareアカウントへデプロイし、自分のGoogleアカウントで使うためのプロジェクトです。共有サービスの接続先は提供しません。Googleの公式製品ではありません。

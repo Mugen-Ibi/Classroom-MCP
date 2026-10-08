@@ -4,10 +4,12 @@
   "description": "Google ClassroomのMCPサーバー",
   "private": true,
   "scripts": {
+    "postinstall": "node scripts/patch-oauth-provider.mjs",
+    "check:oauth-patch": "node scripts/patch-oauth-provider.mjs",
     "dev": "wrangler dev",
     "deploy": "npm run check:config && wrangler deploy",
     "build": "npm run check:config && wrangler deploy --dry-run --outdir dist",
-    "check:config": "node scripts/check-config.mjs",
+    "check:config": "npm run check:oauth-patch && node scripts/check-config.mjs",
     "typecheck": "tsc --noEmit",
     "test": "npm run check:config && wrangler deploy --dry-run --outdir dist && vitest run",
     "format": "prettier --write .",
@@ -30,7 +32,7 @@
   },
   "homepage": "https://github.com/Mugen-Ibi/Classroom-MCP#readme",
   "dependencies": {
-    "@cloudflare/workers-oauth-provider": "1.2.1",
+    "@cloudflare/workers-oauth-provider": "1.2.3",
     "@modelcontextprotocol/server": "2.0.0",
     "agents": "0.24.0",
     "zod": "4.6.5"
