@@ -1,6 +1,6 @@
 # Classroom Preview
 
-`wrangler.jsonc` の `previews.OAUTH_KV` は、ユーザーが作成した preview 専用 namespace を参照します。本番の OAuth KV は維持し、production と preview の認可・token・client 登録を分けます。この KV を UNIPA に流用しません。
+`wrangler.jsonc` の `previews.OAUTH_KV` は、ユーザーが作成した preview 専用 namespace を参照します。本番の OAuth KV は維持し、production と preview の認可・token・client 登録を分けます。
 
 合成 workerd fixture は設定ファイルからそれぞれの namespace ID を読み、独立したローカル保存先に割り当てます。preview から production の KV レコードが見えず、preview の書き込みが production に影響せず、production の access / refresh token が拒否され、production grant が変わらないことを検証します。実 KV・実 Google・実ログインにはアクセスしません。
 

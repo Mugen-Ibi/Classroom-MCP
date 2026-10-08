@@ -367,7 +367,7 @@ describe("Worker OAuth and MCP in workerd", () => {
     ).toBe(403);
   });
 
-  it("refreshes a legacy mixed-service grant without changing the Classroom connection", async () => {
+  it("refreshes an existing Classroom grant and rejects a different resource", async () => {
     const wrongAudience = await send("/oauth/token", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -379,15 +379,13 @@ describe("Worker OAuth and MCP in workerd", () => {
       }).toString(),
     });
     expect(wrongAudience.status).toBe(400);
-    // Synthetic local KV only: retain the encrypted Google grant and model an
-    // existing connection that predates the separation of the two services.
+    // Synthetic local KV only: an ordinary existing Classroom connection.
     const kv = await mf.getKVNamespace("OAUTH_KV", "classroom");
     const grants = await kv.list({ prefix: "grant:" });
     expect(grants.keys).toHaveLength(1);
     const key = grants.keys[0]!.name;
-    const legacy = JSON.parse((await kv.get(key))!);
-    legacy.scope.push("unipa:read", "unipa:monitor");
-    await kv.put(key, JSON.stringify(legacy));
+    const savedGrant = await kv.get(key);
+    expect(savedGrant).not.toBeNull();
     const refreshed = await send("/oauth/token", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -402,6 +400,7 @@ describe("Worker OAuth and MCP in workerd", () => {
     const token = await refreshed.json();
     expect(token.access_token).not.toBe(mcpToken);
     expect(token.refresh_token).not.toBe(refreshToken);
+    expect(token.scope).toBe("classroom:read");
     expect(JSON.stringify(token)).not.toContain("google-refresh");
     const connected = await send("/mcp", {
       method: "POST",
@@ -415,9 +414,6 @@ describe("Worker OAuth and MCP in workerd", () => {
     expect(connected.status).toBe(200);
     const tools = (await rpc(connected as unknown as Response)).result.tools;
     expect(tools).toHaveLength(5);
-    expect(
-      tools.every((tool: { name: string }) => !tool.name.includes("unipa")),
-    ).toBe(true);
   });
 
   it("recovers a transient Classroom 503 during an authenticated MCP call", async () => {

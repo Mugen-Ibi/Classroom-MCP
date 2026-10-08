@@ -17,4 +17,4 @@ Use case: logo-design. Asset: square app icon for a personal Google Classroom re
 
 MCPのserverInfoに128px・512pxアイコンのURLを登録しています。対応クライアントで表示できます。ホームページ・OAuth同意画面にもロゴとfaviconを設定しています。
 
-個人デプロイではアイコンURLもWorkersのSettingsで設定した`PUBLIC_URL`を基に自分のWorkerへ向きます。実際の公開URLを`wrangler.jsonc`へ保存する必要はありません。2026-10-06の作者環境では3点の配信用PNGが200で返り、ソースのファイルとバイト一致したことを確認しています。[公開確認記録](../docs/UNIPA_REVIEW_2026-10-06.md)と[ドキュメント案内](../docs/README.md)を参照してください。
+個人デプロイではアイコンURLもWorkersのSettingsで設定した`PUBLIC_URL`を基に自分のWorkerへ向きます。実際の公開URLを`wrangler.jsonc`へ保存する必要はありません。[ドキュメント案内](../docs/README.md)を参照してください。

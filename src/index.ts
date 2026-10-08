@@ -22,6 +22,9 @@ export async function exchangeMcpToken(
   return {
     newProps: grant,
     accessTokenProps,
+    accessTokenScope: options.requestedScope.filter(
+      (scope) => scope === MCP_SCOPE,
+    ),
     accessTokenTTL: Math.max(
       1,
       Math.min(3600, Math.floor((grant.expiresAt - Date.now()) / 1000) - 60),

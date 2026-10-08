@@ -161,7 +161,7 @@ Google Classroomの画面と照合し、本人の授業が取得できること�
 
 ## 更新する
 
-既存の Worker 名・PUBLIC_URL・OAUTH_KV の ID・Google OAuth 設定を維持してください。サービス分離時の手順は[分離と移行](service-separation.md)を参照してください。
+既存の Worker 名・PUBLIC_URL・OAUTH_KV の ID・Google OAuth 設定を維持してください。Classroom の読み取り権限と保存形式を維持する更新では既存接続を継続できます。クライアントが古いツール一覧を保持している場合は一覧を更新してください。実接続での継続は更新後に確認します。
 
 ```bash
 git add wrangler.jsonc

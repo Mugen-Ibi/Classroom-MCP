@@ -21,8 +21,6 @@ ChatGPT / MCPクライアント
 
 SDK v2のstateless MCPを使います。Durable Objectsは不要です。Googleの認証情報はWorkers OAuth ProviderがKV内に暗号化して保存します。課題の作成・提出・編集は実装していません。各接続はログインした本人のGoogleアカウントを使います。
 
-UNIPA 通知機能は独立したローカル UNIPA-MCP リポジトリへ分離しました。このリポジトリは Classroom の 5 ツールだけを提供します。公開と環境移行はまだ実施していません。[分離と移行](docs/service-separation.md)を参照してください。
-
 ## MCPツール
 
 | ツール                 | 内容                                          |
