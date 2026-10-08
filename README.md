@@ -182,7 +182,8 @@ MCP Inspectorで確認する場合は`npx @modelcontextprotocol/inspector`を実
 
 ## 参照
 
-- [Cloudflare MCP handler API](https://developers.cloudflare.com/agents/model-context-protocol/apis/handler-api/)
+- [MCP SDK 2.2.0 handler / release](https://github.com/modelcontextprotocol/typescript-sdk/releases/tag/v2.2.0)
+- [Dependency maintenance](docs/dependencies.md)
 - [Workers OAuth Provider: upstream sign-in](https://github.com/cloudflare/workers-oauth-provider/blob/main/docs/upstream-sign-in.md)
 - [Workers Builds](https://developers.cloudflare.com/workers/ci-cd/builds/)
 - [Classroom API: studentSubmissions.list](https://developers.google.com/workspace/classroom/reference/rest/v1/courses.courseWork.studentSubmissions/list)

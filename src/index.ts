@@ -3,7 +3,7 @@ import OAuthProvider, {
   type OAuthResourceContext,
   type TokenExchangeCallbackOptions,
 } from "@cloudflare/workers-oauth-provider";
-import { createMcpHandler } from "agents/mcp/server";
+import { createMcpHandler } from "./mcp-handler";
 import { authHandler, MCP_SCOPE } from "./auth";
 import { ClassroomClient } from "./classroom";
 import { emailAllowed, refreshGoogleGrant } from "./google";
