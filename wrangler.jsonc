@@ -17,10 +17,6 @@
       "binding": "OAUTH_KV",
       "id": "50886f599f7d48398a628e13f564600c",
     },
-    {
-      "binding": "UNIPA_SNAPSHOTS",
-      "id": "d9adce5ef3f849a08c18c7b8d926c9b4",
-    },
   ],
   "observability": {
     "enabled": false,
