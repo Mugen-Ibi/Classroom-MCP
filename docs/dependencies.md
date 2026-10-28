@@ -2,7 +2,7 @@
 
 MCP uses the official server/core 2.4.0 combination with Zod 4.6.7. A small Worker adapter
 delegates modern HTTP and legacy stateless serving to the SDK. Factories return
-a fresh Classroom server per request. The eight read-only tools do not issue
+a fresh Classroom server per request. The nine read-only tools (one compatibility alias) do not issue
 server-to-client requests or use sessions or the former Agents auth storage helper.
 
 The provider remains upstream 1.2.1. Existing OAuth, scope, account and Google
@@ -13,17 +13,18 @@ identity. Application authorization stays in the protected caller. Google grant
 props are not copied to SDK metadata. No private symbols or provider hooks are used.
 
 New access tokens contain the intersection of approved MCP scopes and recorded
-Google permissions: classroom:read, classroom:materials:read and
-classroom:attachments:read. Legacy grants keep classroom:read; refreshing never
+Google permissions: classroom:read and classroom:materials:read.
+The retired classroom:attachments:read scope is no longer issued, including
+for refreshed legacy grants. Legacy grants keep classroom:read; refreshing never
 adds MCP permissions. The stored Google refresh token stays encrypted in grant
 props. This uses the public accessTokenScope callback result. offline_access
 remains advertised for refreshing a connection.
 
-Attachment parsing adds pinned unpdf 1.9.1 (serverless PDF.js), fflate 0.8.3
-(bounded streaming ZIP extraction), and fast-xml-parser 5.11.2 (OOXML text).
-No canvas renderer, native binary, OCR service or remote parsing API is used.
-The workerd fixture parses actual PDF, DOCX and PPTX bytes. See
-[materials](materials.md) for format and resource limits.
+Attachment text and raw-file retrieval now belong to the connected Google Drive
+plugin in the client. The Worker does not call Drive, request drive.readonly,
+download attachments or parse file contents. unpdf, fflate and fast-xml-parser
+have been removed, together with the retired extraction code and its fixtures.
+See [materials](materials.md) for the handoff contract and migration.
 
 ## Security updates on 2026-10-28
 
@@ -53,9 +54,11 @@ after rejection, and concurrent clients with matching JSON-RPC IDs.
 The focused input-budget tests reproduced the missing control with the upgraded
 SDK before opting in: all eight cases failed because excessive arguments or
 envelopes were accepted. After enabling both limits, those cases reject the
-inputs and valid maximum-length page tokens still work. Clean-install validation
+inputs and valid maximum-length page tokens still work. The initial security-update validation
 on 2026-10-28 passed `npm run check` (11 files, 87 tests),
 `npm audit --audit-level=moderate` (zero findings), and `git diff --check`.
+The later Drive plugin handoff migration removed the obsolete extraction tests;
+its current validation passes 10 files / 78 tests and the audit still reports zero.
 
 The existing fresh-server factory remains in use. Authentication belongs to
 Workers OAuth Provider, which exact-checks the token audience against the

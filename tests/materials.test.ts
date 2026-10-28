@@ -1,7 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ClassroomClient } from "../src/classroom";
-import { MAX_FILE_BYTES } from "../src/documents";
-import { pdfFixture } from "./document-fixtures";
 
 const material = {
   id: "m1",
@@ -10,7 +8,7 @@ const material = {
   state: "PUBLISHED",
   description: "今週の資料",
   materials: [
-    { driveFile: { driveFile: { id: "attached-file", title: "Lecture" } } },
+    { driveFile: { driveFile: { id: "attached-file", title: "Lecture.pdf" } } },
   ],
 };
 const args = {
@@ -19,31 +17,21 @@ const args = {
   sourceId: "m1",
   attachmentIndex: 0,
 };
-const metadata = {
-  id: "attached-file",
-  name: "Lecture",
-  mimeType: "text/plain",
-  version: "1",
-  capabilities: { canDownload: true },
-};
 afterEach(() => vi.unstubAllGlobals());
 
-function upstream(
-  options: { file?: object; parent?: object; content?: () => Response } = {},
-) {
+function upstream(parent: object = material) {
   const mock = vi.fn(async (url: URL) => {
-    if (url.hostname === "classroom.googleapis.com")
-      return Response.json(options.parent ?? material);
-    if (url.searchParams.has("alt") || url.pathname.endsWith("/export"))
-      return options.content?.() ?? new Response("授業資料の本文です。");
-    return Response.json({ ...metadata, ...options.file });
+    // Simulate the administrator block. Reference retrieval must never hit Drive.
+    if (url.hostname !== "classroom.googleapis.com")
+      throw new Error("Drive blocked by administrator");
+    return Response.json(parent);
   });
   vi.stubGlobal("fetch", mock);
   return mock;
 }
 
-describe("General Classroom materials and scoped attachment reads", () => {
-  it("uses the singular response key, published state and identical paging conditions", async () => {
+describe("Classroom materials and Google Drive plugin handoff", () => {
+  it("preserves continuation on empty material pages and uses the singular response key", async () => {
     const mock = vi.fn(async (url: URL) =>
       Response.json(
         url.searchParams.has("pageToken")
@@ -57,14 +45,16 @@ describe("General Classroom materials and scoped attachment reads", () => {
       courseId: "d:alias",
       pageSize: 2,
     });
-    expect(first.materials).toEqual([]);
-    expect(first.nextPageToken).toBe("next");
-    const second = await client.listMaterials({
-      courseId: "d:alias",
-      pageSize: 2,
-      pageToken: first.nextPageToken,
-    });
-    expect(second.materials).toEqual([material]);
+    expect(first).toEqual({ materials: [], nextPageToken: "next" });
+    expect(
+      (
+        await client.listMaterials({
+          courseId: "d:alias",
+          pageSize: 2,
+          pageToken: first.nextPageToken,
+        })
+      ).materials,
+    ).toEqual([material]);
     const urls = mock.mock.calls.map(([url]) => url);
     expect(urls[0]!.pathname).toBe("/v1/courses/d%3Aalias/courseWorkMaterials");
     expect(
@@ -75,47 +65,55 @@ describe("General Classroom materials and scoped attachment reads", () => {
       ),
     ).toBe(true);
   });
-  it("returns published material details and refuses drafts", async () => {
+  it("returns published details and refuses drafts", async () => {
     upstream();
     await expect(
       new ClassroomClient("secret").getMaterial("c1", "m1"),
     ).resolves.toEqual(material);
-    upstream({ parent: { ...material, state: "DRAFT" } });
+    upstream({ ...material, state: "DRAFT" });
     await expect(
       new ClassroomClient("secret").getMaterial("c1", "m1"),
     ).rejects.toThrow("published");
   });
-  it("validates attachment membership before reading Drive and pages text with provenance", async () => {
+  it("returns plugin actions after one Classroom request despite the Drive policy block", async () => {
     const mock = upstream();
-    const result = await new ClassroomClient("secret").getAttachmentContent({
-      ...args,
-      maxChars: 4,
-    });
+    const result = await new ClassroomClient(
+      "private-google-token",
+    ).getAttachmentReference(args, "student@example.test");
     expect(result).toMatchObject({
-      text: "授業資料",
-      nextOffset: 4,
-      truncated: true,
-      fileId: "attached-file",
-      version: "1",
-    });
-    expect(mock.mock.calls.map(([url]) => url.hostname)).toEqual([
-      "classroom.googleapis.com",
-      "www.googleapis.com",
-      "www.googleapis.com",
-    ]);
-    expect(mock.mock.calls[2]![0].searchParams.get("alt")).toBe("media");
-    expect(JSON.stringify(result)).not.toContain("secret");
-    const next = await new ClassroomClient("secret").getAttachmentContent({
       ...args,
-      offset: 4,
+      sourceTitle: "配布資料",
+      contentFetched: false,
+      fileId: "attached-file",
+      title: "Lecture.pdf",
+      url: "https://drive.google.com/file/d/attached-file/view",
+      retrieval: {
+        provider: "google_drive_plugin",
+        status: "requires_client_action",
+        performed: false,
+        accountEmail: "student@example.test",
+        metadata: { action: "get_file_metadata", fileId: "attached-file" },
+        text: {
+          action: "fetch",
+          url: "https://drive.google.com/file/d/attached-file/view",
+        },
+        file: {
+          action: "fetch",
+          url: "https://drive.google.com/file/d/attached-file/view",
+          download_raw_file: true,
+          include_base64: false,
+        },
+      },
     });
-    expect(result.text + next.text).toBe("授業資料の本文です。");
-    expect(next.truncated).toBe(false);
-    expect(next.nextOffset).toBeUndefined();
+    expect(result).not.toHaveProperty("text");
+    expect(result).not.toHaveProperty("nextOffset");
+    expect(JSON.stringify(result)).not.toContain("private-google-token");
+    expect(JSON.stringify(result)).not.toContain("link_id");
+    expect(mock).toHaveBeenCalledOnce();
   });
-  it("also reads files attached to assignments", async () => {
+  it("resolves assignment attachments without a Drive scope", async () => {
     const mock = upstream();
-    await new ClassroomClient("secret").getAttachmentContent({
+    const result = await new ClassroomClient("secret").getAttachmentReference({
       ...args,
       sourceType: "assignment",
       sourceId: "a1",
@@ -123,115 +121,128 @@ describe("General Classroom materials and scoped attachment reads", () => {
     expect(mock.mock.calls[0]![0].pathname).toBe(
       "/v1/courses/c1/courseWork/a1",
     );
+    expect(result.retrieval.provider).toBe("google_drive_plugin");
+    expect(mock).toHaveBeenCalledOnce();
   });
-  it("exports native Docs/Slides and warns that Sheets includes only the first sheet", async () => {
-    for (const type of ["document", "presentation", "spreadsheet"]) {
-      const mock = upstream({
-        file: { mimeType: `application/vnd.google-apps.${type}` },
-      });
-      const result = await new ClassroomClient("secret").getAttachmentContent(
+  it("preserves the index when an external link precedes the Drive attachment", async () => {
+    upstream({
+      ...material,
+      materials: [
+        { link: { url: "https://example.test/" } },
+        ...material.materials,
+      ],
+    });
+    expect(
+      (
+        await new ClassroomClient("secret").getAttachmentReference({
+          ...args,
+          attachmentIndex: 1,
+        })
+      ).fileId,
+    ).toBe("attached-file");
+  });
+  it("returns non-Drive attachments as references without promising Drive retrieval", async () => {
+    for (const attachment of [
+      { link: { url: "https://example.test/", title: "External" } },
+      {
+        youtubeVideo: {
+          id: "video",
+          alternateLink: "https://youtube.com/watch?v=video",
+        },
+      },
+      { form: { formUrl: "https://docs.google.com/forms/d/form/viewform" } },
+    ]) {
+      const mock = upstream({ ...material, materials: [attachment] });
+      const result = await new ClassroomClient("secret").getAttachmentReference(
         args,
       );
-      expect(mock.mock.calls[2]![0].pathname).toBe(
-        "/drive/v3/files/attached-file/export",
-      );
-      expect(mock.mock.calls[2]![0].searchParams.get("mimeType")).toBe(
-        type === "spreadsheet" ? "text/tab-separated-values" : "text/plain",
-      );
-      if (type === "spreadsheet")
-        expect(result.warnings.join(" ")).toContain("first sheet");
+      expect(result).toMatchObject({
+        contentFetched: false,
+        attachment,
+        retrieval: {
+          provider: "external_reference",
+          status: "reference_only",
+          performed: false,
+        },
+      });
+      expect(result).not.toHaveProperty("fileId");
+      expect(mock).toHaveBeenCalledOnce();
     }
   });
-  it("extracts a real PDF rather than returning base64", async () => {
+  it("preserves a resource key from a Google URL for the same file", async () => {
     upstream({
-      file: { mimeType: "application/pdf" },
-      content: () => new Response(pdfFixture("Material PDF")),
+      ...material,
+      materials: [
+        {
+          driveFile: {
+            driveFile: {
+              id: "attached-file",
+              alternateLink:
+                "https://drive.google.com/file/d/attached-file/view?resourcekey=valid-key&usp=drive_web",
+            },
+          },
+        },
+      ],
     });
-    const result = await new ClassroomClient("secret").getAttachmentContent(
-      args,
+    expect(
+      (await new ClassroomClient("secret").getAttachmentReference(args)).url,
+    ).toBe(
+      "https://drive.google.com/file/d/attached-file/view?resourcekey=valid-key",
     );
-    expect(result.text).toContain("Material PDF");
-    expect(result.warnings.join(" ")).toContain("OCR");
   });
-  it("makes no Drive requests for missing indices, non-Drive links or unpublished parents", async () => {
+  it("does not forward untrusted hosts, credentials, mismatched IDs or arbitrary query parameters", async () => {
+    for (const alternateLink of [
+      "https://evil.test/file/d/attached-file/view?resourcekey=key",
+      "https://drive.google.com/file/d/other/view?resourcekey=key",
+      "https://user:pass@drive.google.com/file/d/attached-file/view?resourcekey=key",
+      "http://drive.google.com/file/d/attached-file/view?resourcekey=key",
+      "https://drive.google.com/file/d/attached-file/view?redirect=https://evil.test",
+      "not a URL",
+    ]) {
+      upstream({
+        ...material,
+        materials: [
+          { driveFile: { driveFile: { id: "attached-file", alternateLink } } },
+        ],
+      });
+      expect(
+        (await new ClassroomClient("secret").getAttachmentReference(args)).url,
+      ).toBe("https://drive.google.com/file/d/attached-file/view");
+    }
+  });
+  it("rejects missing attachments, unpublished parents and invalid file IDs", async () => {
     for (const parent of [
       { ...material, materials: [] },
+      { ...material, state: "DRAFT" },
       {
         ...material,
-        materials: [{ link: { url: "http://169.254.169.254/" } }],
+        materials: [{ driveFile: { driveFile: { id: "../escape" } } }],
       },
-      { ...material, state: "DRAFT" },
+      { ...material, materials: [{ driveFile: { driveFile: {} } }] },
     ]) {
-      const mock = upstream({ parent });
+      const mock = upstream(parent);
       await expect(
-        new ClassroomClient("secret").getAttachmentContent(args),
+        new ClassroomClient("secret").getAttachmentReference(args),
       ).rejects.toThrow();
       expect(mock).toHaveBeenCalledOnce();
     }
   });
-  it("stops before download for restricted, unsupported or oversized files", async () => {
-    for (const file of [
-      { capabilities: { canDownload: false } },
-      { mimeType: "application/msword" },
-      { size: String(MAX_FILE_BYTES + 1) },
-    ]) {
-      const mock = upstream({ file });
-      await expect(
-        new ClassroomClient("secret").getAttachmentContent(args),
-      ).rejects.toThrow();
-      expect(mock).toHaveBeenCalledTimes(2);
-    }
-  });
-  it("bounds actual streamed bytes without a Content-Length and cancels overflow", async () => {
-    const cancel = vi.fn();
-    upstream({
-      content: () =>
-        new Response(
-          new ReadableStream({
-            pull(controller) {
-              controller.enqueue(new Uint8Array(1024 * 1024));
-            },
-            cancel,
-          }),
-        ),
-    });
+  it("keeps cancellation and sanitized Classroom denial behavior", async () => {
+    const mock = upstream();
     await expect(
-      new ClassroomClient("secret").getAttachmentContent(args),
-    ).rejects.toThrow("5 MiB");
-    expect(cancel).toHaveBeenCalledOnce();
-  });
-  it("sanitizes Drive denial errors, avoids retries and forbids redirects", async () => {
-    const mock = vi.fn(async (url: URL, init: RequestInit) => {
-      expect(init.redirect).toBe("manual");
-      return url.hostname === "classroom.googleapis.com"
-        ? Response.json(material)
-        : new Response("private upstream token", { status: 403 });
-    });
-    vi.stubGlobal("fetch", mock);
-    await expect(
-      new ClassroomClient("secret").getAttachmentContent(args),
-    ).rejects.toThrow("Drive access denied");
-    expect(mock).toHaveBeenCalledTimes(2);
-  });
-  it("reports invalid offsets, empty extraction and cancelled requests", async () => {
-    upstream();
-    await expect(
-      new ClassroomClient("secret").getAttachmentContent({
-        ...args,
-        offset: 500,
-      }),
-    ).rejects.toThrow("offset");
-    upstream({ content: () => new Response("") });
-    const empty = await new ClassroomClient("secret").getAttachmentContent(
-      args,
-    );
-    expect(empty.warnings.join(" ")).toContain(
-      "does not mean the source is empty",
-    );
-    await expect(
-      new ClassroomClient("secret", AbortSignal.abort()).getAttachmentContent(
+      new ClassroomClient("secret", AbortSignal.abort()).getAttachmentReference(
         args,
       ),
     ).rejects.toThrow("cancelled");
+    expect(mock).not.toHaveBeenCalled();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () => new Response("private upstream detail", { status: 403 }),
+      ),
+    );
+    await expect(
+      new ClassroomClient("secret").getAttachmentReference(args),
+    ).rejects.toThrow("Access denied");
   });
 });

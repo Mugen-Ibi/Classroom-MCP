@@ -1,6 +1,5 @@
 import { expect, it } from "vitest";
 import { Miniflare, convertV4MiniflareOptions } from "miniflare";
-import { docxFixture, pdfFixture, pptxFixture } from "./document-fixtures";
 
 it("loads the dry-run Worker with the Miniflare version shipped by stable Wrangler", async () => {
   const origin = "http://127.0.0.1:8787";
@@ -104,6 +103,7 @@ it("serves Classroom MCP in workerd using public auth metadata and a local API m
     ).toEqual([
       "get_assignment",
       "get_attachment_content",
+      "get_attachment_reference",
       "get_material",
       "list_assignments",
       "list_courses",
@@ -119,27 +119,6 @@ it("serves Classroom MCP in workerd using public auth metadata and a local API m
     expect(JSON.parse(called.content[0].text).courses).toEqual([
       { id: "c1", name: "Math", section: "A" },
     ]);
-    for (const [mimeType, bytes, expected] of [
-      ["application/pdf", pdfFixture("AB", false, true), "講義"],
-      [
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        docxFixture(),
-        "講義 & 資料",
-      ],
-      [
-        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-        pptxFixture(),
-        "[Slide 1]\nFirst slide",
-      ],
-    ] as const) {
-      const parsed = await worker.fetch(origin + "/extract", {
-        method: "POST",
-        headers: { "Content-Type": mimeType },
-        body: bytes,
-      });
-      expect(parsed.status, await parsed.clone().text()).toBe(200);
-      expect((await parsed.json()).text).toContain(expected);
-    }
   } finally {
     await mf.dispose();
   }

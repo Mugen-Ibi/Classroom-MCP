@@ -1,5 +1,4 @@
 import type { Assignment, Course, CourseMaterial, Submission } from "./types";
-import { extractDocument, MAX_FILE_BYTES } from "./documents";
 
 type Query = Record<string, string | number | undefined>;
 interface Page<T> {
@@ -106,17 +105,8 @@ export class ClassroomClient {
     });
   }
 
-  private async read<T>(
-    path: string,
-    query: Query,
-    consume: (response: Response) => Promise<T>,
-    api: "Classroom" | "Drive" = "Classroom",
-  ): Promise<T> {
-    const base =
-      api === "Classroom"
-        ? "https://classroom.googleapis.com/v1/"
-        : "https://www.googleapis.com/drive/v3/";
-    const url = new URL(base + path);
+  private async get<T>(path: string, query: Query = {}): Promise<T> {
+    const url = new URL(`https://classroom.googleapis.com/v1/${path}`);
     for (const [key, value] of Object.entries(query))
       if (value !== undefined) url.searchParams.set(key, String(value));
     for (let attempt = 0; attempt < 3; attempt++) {
@@ -140,7 +130,7 @@ export class ClassroomClient {
             : timeout,
         });
         // Await body consumption inside the retry boundary: it can time out too.
-        if (response.ok) return await consume(response);
+        if (response.ok) return (await response.json()) as T;
       } catch (error) {
         if (error instanceof ClassroomError) throw error;
         this.checkCancelled();
@@ -148,20 +138,14 @@ export class ClassroomClient {
       }
       const messages: Record<number, string> = {
         401: "Google access expired or was revoked. Reconnect this MCP.",
-        403:
-          api === "Classroom"
-            ? "Access denied. Check enrollment, Classroom API enablement, OAuth scopes, and your school's administrator policy."
-            : "Drive access denied. Check file sharing, download restrictions, Drive API enablement, OAuth scopes, and administrator policy. Reconnect for new attachment permissions.",
-        404:
-          api === "Classroom"
-            ? "Course, assignment or material not found, or it is inaccessible."
-            : "Attached Drive file not found, or it is inaccessible.",
-        429: `${api} rate limit exceeded. Retry later.`,
+        403: "Access denied. Check enrollment, Classroom API enablement, OAuth scopes, and your school's administrator policy.",
+        404: "Course, assignment or material not found, or it is inaccessible.",
+        429: "Classroom rate limit exceeded. Retry later.",
       };
       const message = response
         ? (messages[response.status] ??
-          `${api} request failed (HTTP ${response.status}). Retry later.`)
-        : `${api} is unavailable or timed out. Retry later.`;
+          `Classroom request failed (HTTP ${response.status}). Retry later.`)
+        : "Classroom is unavailable or timed out. Retry later.";
       const retryable =
         !response || [408, 429, 500, 502, 503, 504].includes(response.status);
       const retryAfter = retryAfterMs(
@@ -179,14 +163,6 @@ export class ClassroomClient {
       await this.wait(delay);
     }
     throw new ClassroomError(TIME_BUDGET_MESSAGE);
-  }
-
-  private get<T>(path: string, query: Query = {}): Promise<T> {
-    return this.read(
-      path,
-      query,
-      async (response) => (await response.json()) as T,
-    );
   }
 
   private async page<T>(
@@ -276,175 +252,102 @@ export class ClassroomClient {
     return material;
   }
 
-  async getAttachmentContent(input: {
-    courseId: string;
-    sourceType: "material" | "assignment";
-    sourceId: string;
-    attachmentIndex: number;
-    offset?: number;
-    maxChars?: number;
-  }) {
+  async getAttachmentReference(
+    input: {
+      courseId: string;
+      sourceType: "material" | "assignment";
+      sourceId: string;
+      attachmentIndex: number;
+    },
+    accountEmail?: string,
+  ) {
     this.checkCancelled();
-    // Re-read the parent on every call. Never accept arbitrary file IDs or URLs.
+    // Re-read the parent; the client cannot select an arbitrary Drive file.
     const parent =
       input.sourceType === "material"
         ? await this.getMaterial(input.courseId, input.sourceId)
         : await this.getAssignment(input.courseId, input.sourceId);
     if (parent.state !== "PUBLISHED")
       throw new ClassroomError(
-        "Only attachments of published Classroom items can be read.",
+        "Only attachments of published Classroom items can be referenced.",
       );
     const attachment = parent.materials?.[input.attachmentIndex];
     if (!attachment)
       throw new ClassroomError(
         "Attachment index not found. Read the source item again.",
       );
-    const fileId = attachment.driveFile?.driveFile?.id;
-    if (!fileId || !/^[a-zA-Z0-9_-]+$/.test(fileId))
-      throw new ClassroomError(
-        "This attachment is not a Drive file. External links, YouTube videos and Forms are references only.",
-      );
-    const path = `files/${encodeURIComponent(fileId)}`;
-    const file = await this.read<{
-      id: string;
-      name: string;
-      mimeType: string;
-      size?: string;
-      modifiedTime?: string;
-      version?: string;
-      capabilities?: { canDownload?: boolean };
-    }>(
-      path,
-      {
-        fields:
-          "id,name,mimeType,size,modifiedTime,version,capabilities(canDownload)",
-        supportsAllDrives: "true",
-      },
-      async (response) => await response.json(),
-      "Drive",
-    );
-    if (file.capabilities?.canDownload !== true)
-      throw new ClassroomError(
-        "Downloading this attachment is restricted by its owner or administrator.",
-      );
-    if (
-      file.size !== undefined &&
-      (!/^\d+$/.test(file.size) || Number(file.size) > MAX_FILE_BYTES)
-    )
-      throw new ClassroomError("Attachment exceeds the 5 MiB file limit.");
-    const exports: Record<string, string> = {
-      "application/vnd.google-apps.document": "text/plain",
-      "application/vnd.google-apps.presentation": "text/plain",
-      "application/vnd.google-apps.spreadsheet": "text/tab-separated-values",
-    };
-    const exportedMime = exports[file.mimeType];
-    const mimeType = exportedMime ?? file.mimeType;
-    if (
-      !exportedMime &&
-      ![
-        "application/pdf",
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-        "text/plain",
-        "text/markdown",
-        "text/csv",
-        "text/tab-separated-values",
-      ].includes(mimeType)
-    )
-      throw new ClassroomError(
-        "Unsupported attachment format. Supported: PDF, DOCX, PPTX, Google Docs/Slides/Sheets and UTF-8 text. Open the original for other formats.",
-      );
-    const bytes = await this.read(
-      exportedMime ? `${path}/export` : path,
-      exportedMime
-        ? { mimeType: exportedMime }
-        : { alt: "media", supportsAllDrives: "true" },
-      async (response) => {
-        if (Number(response.headers.get("Content-Length")) > MAX_FILE_BYTES) {
-          await response.body?.cancel();
-          throw new ClassroomError("Attachment exceeds the 5 MiB file limit.");
-        }
-        if (!response.body) return new Uint8Array();
-        const reader = response.body.getReader();
-        const chunks: Uint8Array[] = [];
-        let length = 0;
-        try {
-          while (true) {
-            this.checkCancelled();
-            const { done, value } = await reader.read();
-            if (done) break;
-            length += value.byteLength;
-            if (length > MAX_FILE_BYTES) {
-              await reader.cancel();
-              throw new ClassroomError(
-                "Attachment exceeds the 5 MiB file limit.",
-              );
-            }
-            chunks.push(value);
-          }
-        } finally {
-          reader.releaseLock();
-        }
-        const buffer = new Uint8Array(length);
-        let position = 0;
-        for (const chunk of chunks) {
-          buffer.set(chunk, position);
-          position += chunk.byteLength;
-        }
-        return buffer;
-      },
-      "Drive",
-    );
-    this.checkCancelled();
-    let extracted: Awaited<ReturnType<typeof extractDocument>>;
-    try {
-      extracted = await extractDocument(bytes, mimeType, this.signal);
-    } catch {
-      this.checkCancelled();
-      throw new ClassroomError(
-        "Unable to extract attachment text. The file may be encrypted, malformed, or exceed document limits. Open the original file.",
-      );
-    }
-    this.checkCancelled();
-    if (Date.now() >= this.deadline)
-      throw new ClassroomError(TIME_BUDGET_MESSAGE);
-    const offset = input.offset ?? 0;
-    const maxChars = input.maxChars ?? 12_000;
-    if (offset > extracted.text.length)
-      throw new ClassroomError(
-        "Text offset is beyond this document. Restart from offset 0; the file may have changed.",
-      );
-    const end = Math.min(extracted.text.length, offset + maxChars);
-    const warnings = [...extracted.warnings];
-    if (exportedMime)
-      warnings.push(
-        "Google Workspace text export omits images, charts, visual layout and embedded content. Verify these in the original file.",
-      );
-    if (file.mimeType === "application/vnd.google-apps.spreadsheet")
-      warnings.push(
-        "Google Sheets export includes only the first sheet; other sheets were not read.",
-      );
-    if (!extracted.text.trim())
-      warnings.push(
-        "No text was extracted. This does not mean the source is empty. Scanned images require OCR, which is not provided.",
-      );
-    return {
+    const provenance = {
       courseId: input.courseId,
       sourceType: input.sourceType,
       sourceId: input.sourceId,
+      sourceTitle: parent.title,
       attachmentIndex: input.attachmentIndex,
-      fileId,
-      name: file.name,
-      mimeType: file.mimeType,
-      modifiedTime: file.modifiedTime,
-      version: file.version,
-      sourceUrl: `https://drive.google.com/file/d/${encodeURIComponent(fileId)}/view`,
-      text: extracted.text.slice(offset, end),
-      offset,
-      totalChars: extracted.text.length,
-      nextOffset: end < extracted.text.length ? end : undefined,
-      truncated: end < extracted.text.length,
-      warnings,
+      attachment,
+      contentFetched: false,
+    };
+    const file = attachment.driveFile?.driveFile;
+    if (!file)
+      return {
+        ...provenance,
+        retrieval: {
+          provider: "external_reference",
+          status: "reference_only",
+          performed: false,
+        },
+        nextStep:
+          "This is not a Drive file attachment. Use the original link, video or Form reference; do not send it to the Google Drive plugin.",
+      };
+    if (typeof file.id !== "string" || !/^[a-zA-Z0-9_-]{1,256}$/.test(file.id))
+      throw new ClassroomError("The attachment has an invalid Drive file ID.");
+    const driveUrl = new URL(`https://drive.google.com/file/d/${file.id}/view`);
+    // Retain a resource key only when the source URL refers to this exact file.
+    // Never forward arbitrary URL parameters or follow a source-provided host.
+    if (file.alternateLink) {
+      try {
+        const original = new URL(file.alternateLink);
+        const originalId =
+          original.pathname.match(/\/d\/([a-zA-Z0-9_-]+)(?:\/|$)/)?.[1] ??
+          (original.pathname === "/open"
+            ? original.searchParams.get("id")
+            : null);
+        const resourceKey = original.searchParams.get("resourcekey");
+        if (
+          original.protocol === "https:" &&
+          ["drive.google.com", "docs.google.com"].includes(original.hostname) &&
+          !original.username &&
+          !original.password &&
+          !original.port &&
+          originalId === file.id &&
+          resourceKey &&
+          /^[a-zA-Z0-9_-]{1,256}$/.test(resourceKey)
+        )
+          driveUrl.searchParams.set("resourcekey", resourceKey);
+      } catch {
+        /* The validated file ID remains sufficient for the reference. */
+      }
+    }
+    const url = driveUrl.toString();
+    return {
+      ...provenance,
+      fileId: file.id,
+      title: file.title,
+      url,
+      retrieval: {
+        provider: "google_drive_plugin",
+        status: "requires_client_action",
+        performed: false,
+        accountEmail,
+        metadata: { action: "get_file_metadata", fileId: file.id },
+        text: { action: "fetch", url },
+        file: {
+          action: "fetch",
+          url,
+          download_raw_file: true,
+          include_base64: false,
+        },
+      },
+      nextStep:
+        "The MCP has not read or downloaded this file. Select the connected Google Drive account matching accountEmail, read metadata, then use its fetch action for text or a raw file reference. The client must call the plugin; this Worker cannot invoke it. If the plugin is unavailable or denied, report that limitation without retrying this MCP for file contents or switching accounts.",
     };
   }
 

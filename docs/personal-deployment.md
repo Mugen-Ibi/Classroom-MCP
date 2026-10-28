@@ -77,7 +77,7 @@ npm run deploy
 ## 3. Google OAuthを設定する
 
 1. [Google Cloud Console](https://console.cloud.google.com/)で、自分のプロジェクトを作成または選択します。
-2. APIとサービス → ライブラリで、**Google Classroom API**と**Google Drive API**を有効にします。
+2. APIとサービス → ライブラリで、**Google Classroom API**を有効にします。このMCPでDrive APIを有効にする必要はありません。
 3. Google Auth Platformで、アプリ名・サポートメール・連絡先などのブランド情報を設定します。
 4. Audience（対象）を設定します。個人用なら通常は**External / Testing**で開始し、Classroomで使う自分のGoogleアカウントをテストユーザーに追加します。組織のInternalを使う場合は、その組織の対象ユーザー・ポリシーに従います。
 5. Data Access（データアクセス）に以下のスコープを追加します。
@@ -86,7 +86,6 @@ npm run deploy
    - `https://www.googleapis.com/auth/classroom.courses.readonly`
    - `https://www.googleapis.com/auth/classroom.coursework.me.readonly`
    - `https://www.googleapis.com/auth/classroom.courseworkmaterials.readonly`
-   - `https://www.googleapis.com/auth/drive.readonly`
 6. Clients（クライアント）で、**ウェブアプリケーション**型のOAuthクライアントを作成します。
 7. 承認済みのリダイレクトURIに、**自分のWorker URL + `/callback`**を登録します。
 
@@ -98,7 +97,7 @@ Google Cloudを設定したアカウントとClassroomの利用アカウント�
 
 このサーバー側OAuthフローでは、JavaScriptの承認済みオリジンは不要です。ローカルでGoogleログインも試す場合だけ、`http://localhost:8787/callback`を追加します。
 
-Google Auth Platformでは`classroom.coursework.me.readonly`が同等の`classroom.student-submissions.me.readonly`として表示・保存される場合があります。実装はどちらも受け入れます。Googleログイン時は要求された読み取り権限を許可してください。`drive.readonly`はアクセス可能な全Driveファイルを対象とする権限ですが、このサーバーではClassroomの指定項目への添付を確認したファイルだけを取得します。一般公開時にはGoogleの制限付きスコープの審査要件を確認してください。
+Google Auth Platformでは`classroom.coursework.me.readonly`が同等の`classroom.student-submissions.me.readonly`として表示・保存される場合があります。実装はどちらも受け入れます。Googleログイン時はClassroomの読み取り権限を許可してください。`drive.readonly`は要求しません。添付ファイルの本文・ダウンロードは、クライアントに別途接続するGoogle Driveプラグインが担当します。
 
 作成したOAuthクライアントのIDとシークレットを、次の手順でWorkerに設定します。MCPクライアント用に別のGoogle OAuthクライアントを作成する必要はありません。
 
@@ -145,7 +144,7 @@ ChatGPTでは、カスタムMCPアプリを追加できる設定画面で開発�
 
 1. MCPの接続許可画面で、接続を始めたクライアントと認証情報の返送先を確認します。
 2. Googleログイン画面で、テストユーザーと`ALLOWED_EMAILS`に登録したアカウントを選びます。
-3. Classroomと添付資料の読み取り権限を確認し、許可します。
+3. Classroomの読み取り権限を確認し、許可します。添付本文にはGoogle Driveプラグインも同じアカウントで接続します。
 4. 接続後、以下のように依頼します。
 
 ```text
@@ -159,13 +158,13 @@ Classroomから今週締切の課題を取得して、日本時間で締切順�
 不完全な取得や、提出状況がUNKNOWNの課題はその旨を表示して。
 ```
 
-Google Classroomの画面と照合し、本人の授業が取得できることを確認してください。教師としてのみ所属する授業は一覧の対象ではありません。次に「この授業の配布資料を一覧にし、指定した資料の添付本文を取得して」と依頼します。対応形式・取得上限・警告の読み方は[資料取得機能](materials.md)を参照してください。
+Google Classroomの画面と照合し、本人の授業が取得できることを確認してください。教師としてのみ所属する授業は一覧の対象ではありません。次に「Classroomで配布資料の添付先を確認し、本文はGoogle Driveプラグインで取得して」と依頼します。本文を取得するまで`contentFetched: false`を成功した本文として扱わないでください。詳細は[資料取得機能](materials.md)を参照してください。
 
 他のMCPクライアントも、OAuthとStreamable HTTPに対応していれば同じ`/mcp`を接続先にします。ブラウザーから直接リクエストするクライアントでは、実装の`src/index.ts`にある`allowedOriginHostnames`へのクライアントのホスト名追加が必要になる場合があります。
 
 ## 更新する
 
-資料取得機能を初めて導入する場合は、Google CloudでDrive APIを有効にし、上記の`classroom.courseworkmaterials.readonly`と`drive.readonly`を追加します。更新をデプロイした後にMCPを再接続し、接続許可画面の`classroom:materials:read`・`classroom:attachments:read`とGoogle側の読み取り権限へ同意します。クライアントの再接続で同意画面が出ない場合は、新規のMCP接続として追加し直してください。既存のトークン更新だけでは新権限を付与しません。再接続前でも既存の課題5ツールは利用できます。
+一般配布資料を初めて使う場合は`classroom.courseworkmaterials.readonly`への同意が必要です。Driveプラグインへの引き継ぎ版では`classroom:attachments:read`と`drive.readonly`をMCPの要求から削除しました。資料の権限がある既存接続はそのまま使えます。ツール一覧を更新し、別途Google DriveプラグインをClassroomと同じアカウントで接続してください。新しい接続ではDrive権限を求めません。既にGoogle側へ付与した古いDrive権限は自動失効しないため、不要な権限を取り消す場合はGoogleアカウントの接続管理で確認します。MCPは取り消し操作を行いません。
 
 まず、変更した`wrangler.jsonc`を自分のForkへ保存します。実際の公開URLはWorkers側の`PUBLIC_URL`で管理します。KV IDはSecretではありません。Googleクライアントシークレット、トークン、`.dev.vars`はコミットしないでください。
 

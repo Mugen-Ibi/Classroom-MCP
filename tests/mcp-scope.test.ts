@@ -2,11 +2,7 @@ import { expect, it } from "vitest";
 import type { TokenExchangeCallbackOptions } from "@cloudflare/workers-oauth-provider";
 import { exchangeMcpToken } from "../src/index";
 import type { Env, GoogleGrant } from "../src/types";
-import {
-  ATTACHMENTS_GOOGLE_SCOPE,
-  MATERIALS_GOOGLE_SCOPE,
-  MCP_READ_SCOPES,
-} from "../src/scopes";
+import { MATERIALS_GOOGLE_SCOPE, MCP_READ_SCOPES } from "../src/scopes";
 
 function fixture(requestedScope: string[]) {
   const grant: GoogleGrant = {
@@ -49,7 +45,6 @@ it("grants new MCP permissions only when both MCP consent and Google permissions
     "classroom:read",
     "classroom:materials:read",
   ]);
-  grant.googleScopes.push(ATTACHMENTS_GOOGLE_SCOPE);
   expect((await exchangeMcpToken(options)).accessTokenScope).toEqual(
     MCP_READ_SCOPES,
   );
@@ -57,6 +52,21 @@ it("grants new MCP permissions only when both MCP consent and Google permissions
   expect((await exchangeMcpToken(options)).accessTokenScope).toEqual([
     "classroom:read",
   ]);
+});
+
+it("drops the retired attachment permission even when an older Google grant still has Drive access", async () => {
+  const { options, grant } = fixture([
+    ...MCP_READ_SCOPES,
+    "classroom:attachments:read",
+    "offline_access",
+  ]);
+  grant.googleScopes = [
+    MATERIALS_GOOGLE_SCOPE,
+    "https://www.googleapis.com/auth/drive.readonly",
+  ];
+  expect((await exchangeMcpToken(options)).accessTokenScope).toEqual(
+    MCP_READ_SCOPES,
+  );
 });
 it("limits an existing multi-permission request without mutating its grant or requested scopes", async () => {
   const { options, grant } = fixture([

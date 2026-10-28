@@ -1,111 +1,89 @@
-# Classroomの配布資料・添付本文の取得
+# Classroom資料とGoogle Driveプラグインの連携
 
-設計・実装日：2026-10-28。課題に付属する資料に加え、「授業」に一般配布資料として投稿された項目を取得し、Drive添付ファイルの本文を読み取ります。課題の作成・提出・編集、共有設定の変更は行いません。
+更新日：2026-10-28。Classroom MCPは授業・課題・一般配布資料の説明と添付参照を取得します。本文と添付ファイルのダウンロードは、同じクライアントに接続したGoogle Driveプラグインへ引き継ぎます。
 
-## 取得の流れ
+## 分担と取得経路
 
 ```mermaid
 flowchart TD
-    A[MCPクライアント] --> B[OAuth・アカウント・権限確認]
-    B --> C[Classroom APIで公開済みの親項目を取得]
-    C --> D[materials配列から指定番号のDrive添付を確認]
-    D --> E[Drive APIでメタデータとダウンロード権限を確認]
-    E --> F[上限付きで取得・メモリ内で本文抽出]
-    F --> G[本文・出典・続きの位置・警告を返す]
+    A[ChatGPT / MCPクライアント] --> B[Classroom MCP]
+    B --> C[Classroom APIで公開済み項目と添付先を確認]
+    C --> D[ファイルID・URL・アカウントと取得手順を返す]
+    D --> A
+    A --> E[同じアカウントのGoogle Driveプラグイン]
+    E --> F[メタデータ確認]
+    F --> G[本文または元ファイルを取得]
 ```
 
-外部URL、YouTube、Formsは一覧・詳細の参照情報として返します。URLをたどる取得処理は実装しません。Classroomの添付にないDriveファイルも対象外です。取得結果やファイルはKVへキャッシュせず、接続中のGoogleアカウントを毎回使用します。
+WorkerからChatGPT内のGoogle Driveプラグインを直接実行するAPIや認証はありません。MCPの応答に含む手順を使い、クライアントが実際にDriveプラグインを呼ぶ必要があります。本文取得はMCPの成功応答だけでは完了しません。Driveプラグインでの取得結果を確認してから「読めた」「ダウンロードできた」と判断します。
 
-## 追加ツール
+このWorkerはDrive APIのメタデータ・本文・バイナリを取得せず、PDF・Officeの解析も行いません。Google Driveプラグインのトークンや接続IDを受け取ることもありません。
 
-| ツール                   | 入力                                                                                | 出力                                                        |
-| ------------------------ | ----------------------------------------------------------------------------------- | ----------------------------------------------------------- |
-| `list_materials`         | `courseId`、任意の`pageSize`・`pageToken`                                           | `materials`、`nextPageToken`                                |
-| `get_material`           | `courseId`、`materialId`                                                            | 公開済み資料のタイトル・説明・日時・`materials`添付配列など |
-| `get_attachment_content` | `courseId`、`sourceType`、`sourceId`、`attachmentIndex`、任意の`offset`・`maxChars` | 本文、出典、ファイル情報、分割取得情報、警告                |
+## ツールと応答
 
-`list_materials`は`courses.courseWorkMaterials.list`を使用します。Google側の配列名は単数形の`courseWorkMaterial`です。状態は`PUBLISHED`、並び順は`updateTime desc`に固定します。`nextPageToken`がある間は同じ`courseId`・`pageSize`で続け、空ページでも終了しません。1回の呼び出しで1ページだけ取得します。削除済み・下書き資料の取得は提供しません。
+| ツール                     | 用途                                                                |
+| -------------------------- | ------------------------------------------------------------------- |
+| `list_materials`           | 公開済み一般配布資料の一覧。更新日時の降順                          |
+| `get_material`             | 指定した公開済み資料の説明と添付配列                                |
+| `get_attachment_reference` | 課題・一般配布資料に付くファイルの参照とDriveプラグイン向け取得手順 |
+| `get_attachment_content`   | 旧クライアント向け互換名。本文取得を行わず、同じ引き継ぎ情報を返す  |
 
-`get_material`のGoogle APIは`courses.courseWorkMaterials.get`です。状態が公開済みであることを確認します。返される本文・ファイル名・説明文は信頼されない資料データとして扱います。
-
-本文取得の例：
+一般配布資料はClassroomの`courseWorkMaterials.list/get`を使います。Googleの配列名は単数形の`courseWorkMaterial`です。一覧は`PUBLISHED`、`updateTime desc`に固定し、`nextPageToken`があれば空ページでも同じ条件で続けます。課題の添付参照にも対応します。
 
 ```json
 {
-  "courseId": "12345",
+  "courseId": "fixture-course",
   "sourceType": "material",
-  "sourceId": "67890",
-  "attachmentIndex": 0,
-  "maxChars": 12000
+  "sourceId": "fixture-material",
+  "attachmentIndex": 0
 }
 ```
 
-`sourceType`は一般配布資料なら`material`、課題なら`assignment`です。`sourceId`にはそれぞれ`materialId`または`assignmentId`を指定します。`attachmentIndex`は親項目の`materials`配列の**0始まり**の番号です。先に一覧・詳細を取得して選びます。本文ツールに任意のURLや取得対象の`fileId`を渡すことはできません。
+`sourceType`は`material`または`assignment`、`sourceId`はその資料IDまたは課題IDです。`attachmentIndex`は親項目の`materials`配列の0始まりの番号です。毎回Classroomで親項目と公開状態を確認します。任意のファイルID・URLを取得対象として渡すことはできません。
 
-本文レスポンスには`courseId`・`sourceType`・`sourceId`・`attachmentIndex`・`fileId`・`name`・`mimeType`・`sourceUrl`・Googleが返した`modifiedTime`・`version`、および次の項目が含まれます。
+| 応答                                                               | 意味                                                                             |
+| ------------------------------------------------------------------ | -------------------------------------------------------------------------------- |
+| `courseId / sourceType / sourceId / sourceTitle / attachmentIndex` | Classroom上の出典                                                                |
+| `attachment`                                                       | Classroomの添付情報。名前・説明・元URLは信頼されない資料データ                   |
+| `fileId / title / url`                                             | Driveファイルの参照。実在・現在の共有権限はDriveプラグインで確認                 |
+| `contentFetched: false`                                            | このMCPは本文・ファイルを取得していない                                          |
+| `retrieval.provider: google_drive_plugin`                          | 本文・ファイルを取得する接続先                                                   |
+| `retrieval.status: requires_client_action / performed: false`      | クライアントによるプラグイン呼び出しが未実施                                     |
+| `retrieval.accountEmail`                                           | Classroomの認証済みアカウント。Drive接続の選択に使う                             |
+| `retrieval.metadata`                                               | `get_file_metadata`向けのファイルID                                              |
+| `retrieval.text`                                                   | 本文を読む`fetch`向けURL                                                         |
+| `retrieval.file`                                                   | 元ファイルを読む`fetch`向けURLと`download_raw_file: true, include_base64: false` |
+| `nextStep`                                                         | プラグインで続きを取得するための案内                                             |
 
-| 項目         | 意味                                                  |
-| ------------ | ----------------------------------------------------- |
-| `text`       | 今回分の抽出本文                                      |
-| `offset`     | 今回の開始位置。UTF-16コード単位                      |
-| `totalChars` | ページ・スライド見出しも含む抽出本文の長さ            |
-| `nextOffset` | 続きの開始位置。なければ取得終了                      |
-| `truncated`  | 今回分の後に本文が残るか                              |
-| `warnings`   | 読めない視覚情報、OCR未実施、空ページ、シート制限など |
+`url`は確認したDrive IDから生成します。同じファイルのHTTPSのGoogle URLに含まれる有効な`resourcekey`だけは保持します。任意のホスト・認証情報・クエリを取得先へ転送しません。Drive以外のリンク、YouTube、Formsは`external_reference / reference_only`として元の参照を返し、Drive取得の対象にはしません。
 
-既定の`maxChars`は12,000、最大50,000です。`nextOffset`があれば、元の入力条件を維持して`offset`をその値に変えます。毎回ファイルを再取得・抽出するため、取得中に`fileId`や`version`が変わった場合は前の断片を破棄して0から読み直してください。変更があるファイルの同一時点のスナップショットは保証しません。`version`が得られない場合も、更新の可能性を含めて扱います。
+互換名の`get_attachment_content`もDrive APIへ接続しません。`deprecated: true`と置き換え先を返し、旧`offset / maxChars`は受け付けても無視します。`text / nextOffset`は返しません。本文を待って同じMCPを繰り返し呼ばず、Driveプラグインへ進みます。
 
-## 認可と既存接続
+## クライアントでの実行手順
 
-| MCP権限                      | Google権限                               | 対象                                           |
-| ---------------------------- | ---------------------------------------- | ---------------------------------------------- |
-| `classroom:read`             | 既存の授業・自分の課題読み取り           | 従来の5ツール                                  |
-| `classroom:materials:read`   | `classroom.courseworkmaterials.readonly` | 一般配布資料の一覧・詳細                       |
-| `classroom:attachments:read` | `drive.readonly`                         | Classroomへの添付を確認したDriveファイルの本文 |
+1. Classroomの一覧・詳細で対象資料を特定し、`get_attachment_reference`を呼びます。
+2. `retrieval.accountEmail`と一致する接続済みGoogle Driveアカウントを選びます。接続IDはそのクライアントで現在使えるものを選び、MCPへ渡しません。アカウントが不明・未接続なら確認し、個人用など別の接続へ自動的に切り替えません。
+3. Google Driveプラグインの`get_file_metadata`でファイルID・MIME型・参照先を確認します。
+4. 本文なら`fetch(url=参照先)`、元のPDFやOfficeファイルなら`fetch(url=参照先, download_raw_file=true, include_base64=false)`を呼びます。Google形式の明示的な変換は、そのプラグインが提供するexport機能と制限に従います。
+5. 返された本文や認証付きファイル参照を確認してから、要約・ファイルの提示へ進みます。ファイル名やURLだけで内容を推測しません。
 
-一般配布資料の添付本文には後者2つのMCP権限が必要です。課題の添付本文には`classroom:read`と`classroom:attachments:read`が必要です。
+クライアントが両方のプラグインを利用できることが前提です。Driveプラグインがない場合や、そちらでも共有設定・管理者ポリシーで拒否された場合はその状態を明示します。MCPへの再試行、別アカウントへの切り替え、制限の回避は行いません。対応形式・文字抽出品質・OCR・取得上限はDriveプラグインの仕様に従います。以前のMCP側の5 MiB・100ページ/スライド・50万文字の制限は撤去しました。
 
-新規接続時の同意画面には3つのMCP読み取り権限を表示します。Google側の`drive.readonly`は、アクセス可能な全Driveファイルを読み取れる広い権限です。Classroomの添付限定という制限はアプリ側の実装であり、Google側のスコープによる限定ではありません。この違いと本文の送信先を同意画面に記載します。`drive.file`は既存の授業添付ファイルを一般に読み取れるスコープではないため採用しません。
+## 認可と移行
 
-OAuthの同意開始時に権限を固定し、承認後に増やしません。Googleトークンに実際に付与されたスコープも記録します。MCPアクセストークンに含める権限は、MCPで同意した権限とGoogle権限の共通範囲です。Google更新トークンはアクセストークンのpropsへ含めません。
+| MCP権限                    | Google権限                               | 用途                         |
+| -------------------------- | ---------------------------------------- | ---------------------------- |
+| `classroom:read`           | 授業と自分の課題の読み取り               | 従来の課題機能・課題添付参照 |
+| `classroom:materials:read` | `classroom.courseworkmaterials.readonly` | 一般配布資料とその添付参照   |
 
-過去の接続は`classroom:read`のままで、資料・添付権限を自動付与しません。Google更新応答でscopeが省略された場合は保存済みの範囲だけを保持します。追加3ツールは一覧に表示されますが、必要な権限がなければGoogle APIへ接続せず再同意を案内します。従来の課題取得は継続できます。
+`classroom:attachments:read`と`drive.readonly`はこのMCPの要求から削除しました。新規接続時も既存トークン更新時も、廃止したMCP権限は発行しません。Google更新トークンとOAuth認証情報の保存・暗号化、アカウント・有効期限・権限の検査は維持します。既にGoogle側へ付与された古いDrive権限の自動失効は行いません。
 
-導入時はGoogle CloudでDrive APIを有効にし、追加のGoogleスコープを設定した後、更新をデプロイしてMCPを再接続します。詳しい手順は[個人デプロイガイド](personal-deployment.md#更新する)を参照してください。学校管理者による許可や、公開アプリの制限付きスコープの審査要件はGoogle側で確認します。
-
-## 対応形式と制限
-
-| 形式                                | 方法と制約                                                                                                         |
-| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| PDF                                 | Worker対応のPDF.jsでページ順に文字抽出。最大100ページ。文字のないページを警告。OCRなし                             |
-| DOCX                                | ZIP内の`word/document.xml`の本文・段落・表の文字を抽出。ヘッダー・フッター・コメント・埋め込みオブジェクトは対象外 |
-| PPTX                                | `presentation.xml`の参照順でスライド本文を抽出。最大100スライド。ノートと埋め込みオブジェクトは対象外              |
-| Google Docs / Slides                | Drive `files.export`で`text/plain`へ変換                                                                           |
-| Google Sheets                       | Drive `files.export`でTSVへ変換。最初のシートだけであることを常に警告                                              |
-| TXT / Markdown / CSV / TSV          | UTF-8として読み取り。別の文字コードは自動推定しない                                                                |
-| DOC / PPT / XLS、画像、動画、その他 | 対象外として明示。原本を開く                                                                                       |
-
-取得前に`capabilities.canDownload`を確認します。共有権限やダウンロード禁止は回避しません。Driveのショートカットも自動解決しません。Drive APIの認証付きリクエストは固定のGoogleホストだけへ送り、HTTPリダイレクトを追跡しません。
-
-ダウンロード・Google形式のエクスポートとも最大5 MiBです。メタデータや`Content-Length`の判定だけに依存せず、ストリームから読んだ実バイト数も制限します。OOXMLでは必要なXMLだけをストリーム展開し、実際の展開合計10 MiB、ZIP内2,000項目、XMLネスト100を上限とします。DTD・独自エンティティ宣言は拒否し、マクロ・外部リレーションを実行しません。抽出本文が50万文字を超えた場合は全体をエラーとして返し、完全取得に見せかけた部分結果は返しません。
-
-ClassroomとDriveは同じ通信リトライ・合計45リクエスト・45秒のネットワーク処理予算を共有します。各通信は本文受信も含め最大15秒、キャンセルを伝播します。本文抽出にもページ間などでキャンセル確認を行いますが、同期解析中の処理時間・メモリをアプリだけで厳密に保証するものではありません。複雑なPDFは上記サイズ内でもWorkerプランのCPU・メモリ上限に達する場合があります。実際の講義資料で運用プランを確認してください。
-
-文字抽出は原本の再現ではありません。画像・グラフ・数式・表の配置・読み順、PDFのフォントによる文字化けを完全には判定できません。PDFの文字が空でも「資料に内容がない」と判断せず、警告と原本を確認します。ユーザーの資料を外部OCRや解析サービスへ送る処理は含みません。
+一般配布資料の権限がある既存接続は継続できます。クライアントのツール一覧・説明を更新し、Google DriveプラグインをClassroomと同じアカウントで接続してください。新しいMCP認可にはDrive APIの有効化やDriveスコープは不要です。詳しい導入・更新手順は[個人デプロイガイド](personal-deployment.md#更新する)を参照してください。
 
 ## 検証範囲
 
-2026-10-28の依存更新後のローカル検証で`npm ci`、`npm run check`（設定検査、TypeScript、Wrangler dry-run、11ファイル・87テスト、Prettier）、`npm audit --audit-level=moderate`（0件）、`git diff --check`が成功しました。本番への反映は対象コミットのWorkers Buildsと公開エンドポイントで別途確認します。
+切り替え後の`npm run check`（設定検査・型検査・dry-runビルド・10ファイル78テスト・整形確認）、`npm audit --audit-level=moderate`（0件）、`git diff --check`が成功しました。
 
-モックAPIで一般配布資料のページング、添付関係、Google形式のexport、権限不足・共有制限・過大ストリーム・外部リンク・破損ファイル・ZIP展開上限・キャンセルを検証します。合成したPDF、Wordの日本語と段落、PowerPointの参照順を実データのバイト列でテストします。workerdでも3形式の本文抽出と、OAuth同意からMCP経由で資料一覧・詳細・添付本文を取得する流れを確認します。
+自動テストでは、Driveを管理者ポリシー相当で拒否するモックでも、Classroomへの1回の参照取得だけで引き継ぎが成立することを確認します。公開状態・ページング・添付番号・resourcekey・URL検証・アカウント情報・旧ツール互換・廃止権限の除外・本文未取得の明示を対象にします。workerdでもDrive APIのモックを提供せず、Classroom認可から参照取得までを検証します。入力上限と同時接続分離の回帰テストも維持します。
 
-実Googleアカウント、学校の管理者ポリシー、日本語を含む実講義PDFの抽出品質、本番CPU・メモリ使用量、ChatGPT再接続後の実ツール利用は、実環境での確認が必要です。ローカルテストやdry-run成功をその代わりとは扱いません。
-
-## 参照
-
-- [Classroom: courseWorkMaterials.list](https://developers.google.com/workspace/classroom/reference/rest/v1/courses.courseWorkMaterials/list)
-- [Classroom: courseWorkMaterials.get](https://developers.google.com/workspace/classroom/reference/rest/v1/courses.courseWorkMaterials/get)
-- [Drive: ダウンロードとエクスポート](https://developers.google.com/workspace/drive/api/guides/manage-downloads)
-- [Google Workspaceのexport対応形式](https://developers.google.com/workspace/drive/api/guides/ref-export-formats)
-- [Driveのスコープと審査](https://developers.google.com/workspace/drive/api/guides/api-specific-auth)
-- [unpdf](https://github.com/unjs/unpdf)、[fflate](https://github.com/101arrowz/fflate)、[fast-xml-parser](https://github.com/NaturalIntelligence/fast-xml-parser)
+2026-10-28、ユーザー指定の講義PDF1件について、Classroomで添付先を特定し、接続済みGoogle Driveプラグインでメタデータ、本文7,128文字、元ファイル8,202,399バイトの認証付き参照を取得できました。インラインBase64は使用していません。実ファイルのID・本文・アカウント情報はリポジトリへ保存していません。この結果は対象PDFでの取得確認であり、他のファイルの共有権限や文字抽出精度を保証するものではありません。

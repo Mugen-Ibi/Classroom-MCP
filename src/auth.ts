@@ -7,12 +7,7 @@ import {
 } from "@cloudflare/workers-oauth-provider";
 import { exchangeGoogleCode, googleAuthorizeUrl, s256 } from "./google";
 import type { Env } from "./types";
-import {
-  ATTACHMENTS_SCOPE,
-  MATERIALS_SCOPE,
-  MCP_READ_SCOPES,
-  MCP_SCOPE,
-} from "./scopes";
+import { MATERIALS_SCOPE, MCP_READ_SCOPES, MCP_SCOPE } from "./scopes";
 
 export { MCP_SCOPE } from "./scopes";
 
@@ -65,7 +60,7 @@ export function consentPage(
 ${details.redirectIsLoopback ? "<p>コンピューター内のアプリに接続権限を渡します。自分で開始した接続であることを確認してください。</p>" : ""}
 <p>許可する権限: ${MCP_SCOPE}（授業、公開済み課題、添付資料へのリンク、自分の提出状況の読み取り）</p>
 ${details.scope.includes(MATERIALS_SCOPE) ? `<p>${MATERIALS_SCOPE}（公開済みの一般配布資料の一覧・説明の読み取り）</p>` : ""}
-${details.scope.includes(ATTACHMENTS_SCOPE) ? `<p>${ATTACHMENTS_SCOPE}（Classroomに添付されたDrive資料の本文の読み取り）。GoogleのDrive読み取り権限は、Google上ではアクセス可能な全Driveファイルを対象にします。このサーバーは指定の課題・配布資料への添付を確認したファイルだけを取得します。本文は接続先のクライアントへ送られます。</p>` : ""}
+<p>添付ファイルの本文・ダウンロードは、接続先クライアントのGoogle Driveプラグインで取得します。このMCPは添付参照だけを返し、Drive権限を要求しません。Google Driveプラグインへの接続・認可は別途必要です。</p>
 <p>次の画面でGoogleアカウントを選択し、読み取り権限を許可します。接続の継続にはGoogleのオフラインアクセスを使用します。</p>
 <form method="post" action="/authorize"><input type="hidden" name="handle" value="${escapeHtml(handle)}">
 <button name="decision" value="approve">許可してGoogleへ</button> <button name="decision" value="deny">拒否</button></form>

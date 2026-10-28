@@ -5,7 +5,7 @@ import { createClassroomServer } from "../src/mcp";
 
 afterEach(() => vi.unstubAllGlobals());
 
-it("offers eight read-only Classroom tools and keeps new tools gated for legacy connections", async () => {
+it("offers nine read-only Classroom tools and keeps general materials gated for legacy connections", async () => {
   const fetch = vi.fn(async () =>
     Response.json({
       courses: [{ id: "fixture-course", name: "Fixture course" }],
@@ -49,6 +49,7 @@ it("offers eight read-only Classroom tools and keeps new tools gated for legacy 
   ).toEqual([
     "get_assignment",
     "get_attachment_content",
+    "get_attachment_reference",
     "get_material",
     "list_assignments",
     "list_courses",
@@ -89,4 +90,35 @@ it("offers eight read-only Classroom tools and keeps new tools gated for legacy 
     },
   });
   expect(invalidAttachment.isError).toBe(true);
+  fetch.mockImplementation(async () =>
+    Response.json({
+      id: "a1",
+      courseId: "c1",
+      title: "Assignment",
+      state: "PUBLISHED",
+      materials: [{ driveFile: { driveFile: { id: "fixture-file" } } }],
+    }),
+  );
+  const alias = await rpc("tools/call", {
+    name: "get_attachment_content",
+    arguments: {
+      courseId: "c1",
+      sourceType: "assignment",
+      sourceId: "a1",
+      attachmentIndex: 0,
+      offset: 40,
+      maxChars: 200,
+    },
+  });
+  const handoff = JSON.parse(alias.content[0].text);
+  expect(alias.isError).not.toBe(true);
+  expect(handoff).toMatchObject({
+    contentFetched: false,
+    deprecated: true,
+    replacement: "get_attachment_reference",
+    retrieval: { provider: "google_drive_plugin", performed: false },
+  });
+  expect(handoff).not.toHaveProperty("text");
+  expect(handoff).not.toHaveProperty("nextOffset");
+  expect(fetch).toHaveBeenCalledTimes(2);
 });

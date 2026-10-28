@@ -58,7 +58,7 @@ describe("Bounded consent form", () => {
     expect(approved.status).toBe(302);
     expect(approvedScope).toEqual([...MCP_READ_SCOPES, "offline_access"]);
     const googleUrl = new URL(approved.headers.get("Location")!);
-    expect(googleUrl.searchParams.get("scope")).toContain("drive.readonly");
+    expect(googleUrl.searchParams.get("scope")).not.toContain("/auth/drive");
   });
   it("rejects an oversized chunked body while reading and cancels the stream", async () => {
     const approveConsent = vi.fn();

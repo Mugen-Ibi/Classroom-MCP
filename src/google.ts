@@ -1,8 +1,6 @@
 import { OAuthError } from "@cloudflare/workers-oauth-provider";
 import type { Env, GoogleGrant } from "./types";
 import {
-  ATTACHMENTS_GOOGLE_SCOPE,
-  ATTACHMENTS_SCOPE,
   MATERIALS_GOOGLE_SCOPE,
   MATERIALS_SCOPE,
   MCP_READ_SCOPES,
@@ -18,9 +16,6 @@ export function googleScopesFor(mcpScopes: string[]) {
     "email",
     ...CLASSROOM_SCOPES,
     ...(mcpScopes.includes(MATERIALS_SCOPE) ? [MATERIALS_GOOGLE_SCOPE] : []),
-    ...(mcpScopes.includes(ATTACHMENTS_SCOPE)
-      ? [ATTACHMENTS_GOOGLE_SCOPE]
-      : []),
   ];
 }
 export const GOOGLE_SCOPES = googleScopesFor(MCP_READ_SCOPES);
@@ -151,8 +146,7 @@ export async function exchangeGoogleCode(
   });
   const granted = (token.scope ?? "").split(/\s+/).filter(Boolean);
   const optionalRequired = googleScopesFor(mcpScopes).filter(
-    (scope) =>
-      scope === MATERIALS_GOOGLE_SCOPE || scope === ATTACHMENTS_GOOGLE_SCOPE,
+    (scope) => scope === MATERIALS_GOOGLE_SCOPE,
   );
   if (
     !hasClassroomReadScopes(token.scope ?? "") ||
@@ -161,7 +155,7 @@ export async function exchangeGoogleCode(
   ) {
     throw new OAuthError("access_denied", {
       description:
-        "Approve the requested Classroom and attachment read permissions and offline access, then reconnect.",
+        "Approve the requested Classroom read permissions and offline access, then reconnect. File contents use the separate Google Drive plugin.",
     });
   }
   const response = await fetch(

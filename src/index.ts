@@ -68,6 +68,7 @@ function createProvider(env: Env) {
               ctx.auth.scope.filter((scope) =>
                 permitsMcpScope(scope, props.googleScopes),
               ),
+              props.email,
             ),
           {
             route: "/mcp",

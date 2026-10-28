@@ -10,11 +10,7 @@ import {
 } from "../src/google";
 import { consentPage } from "../src/auth";
 import type { Env, GoogleGrant } from "../src/types";
-import {
-  ATTACHMENTS_GOOGLE_SCOPE,
-  MATERIALS_GOOGLE_SCOPE,
-  MCP_SCOPE,
-} from "../src/scopes";
+import { MATERIALS_GOOGLE_SCOPE, MCP_SCOPE } from "../src/scopes";
 
 const env = {
   PUBLIC_URL: "https://classroom.test",
@@ -146,7 +142,7 @@ describe("Google OAuth", () => {
               access_token: "access",
               expires_in: 3600,
               refresh_token: "refresh",
-              scope: `${CLASSROOM_SCOPES[0]} https://www.googleapis.com/auth/classroom.student-submissions.me.readonly ${MATERIALS_GOOGLE_SCOPE} ${ATTACHMENTS_GOOGLE_SCOPE}`,
+              scope: `${CLASSROOM_SCOPES[0]} https://www.googleapis.com/auth/classroom.student-submissions.me.readonly ${MATERIALS_GOOGLE_SCOPE}`,
             })
           : Response.json({
               sub: "u",

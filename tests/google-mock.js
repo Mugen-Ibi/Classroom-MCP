@@ -40,7 +40,7 @@ export default {
         expires_in: 3600,
         refresh_token: "google-refresh",
         scope:
-          "https://www.googleapis.com/auth/classroom.courses.readonly https://www.googleapis.com/auth/classroom.coursework.me.readonly https://www.googleapis.com/auth/classroom.courseworkmaterials.readonly https://www.googleapis.com/auth/drive.readonly",
+          "https://www.googleapis.com/auth/classroom.courses.readonly https://www.googleapis.com/auth/classroom.coursework.me.readonly https://www.googleapis.com/auth/classroom.courseworkmaterials.readonly",
       });
     }
     if (url.hostname === "openidconnect.googleapis.com")
@@ -59,23 +59,7 @@ export default {
       url.pathname === "/v1/courses/c1/courseWorkMaterials/m1"
     )
       return Response.json(material);
-    if (
-      url.hostname === "www.googleapis.com" &&
-      url.pathname === "/drive/v3/files/lecture"
-    )
-      return Response.json({
-        id: "lecture",
-        name: "Lecture document",
-        mimeType: "application/vnd.google-apps.document",
-        version: "3",
-        capabilities: { canDownload: true },
-      });
-    if (
-      url.hostname === "www.googleapis.com" &&
-      url.pathname === "/drive/v3/files/lecture/export" &&
-      url.searchParams.get("mimeType") === "text/plain"
-    )
-      return new Response("Classroom attachment body fixture");
+    // Any Drive request is an integration regression: the Worker must only hand off references.
     if (
       url.hostname === "classroom.googleapis.com" &&
       url.pathname === "/v1/courses" &&

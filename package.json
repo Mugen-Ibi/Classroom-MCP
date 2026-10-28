@@ -32,9 +32,6 @@
   "dependencies": {
     "@cloudflare/workers-oauth-provider": "1.2.1",
     "@modelcontextprotocol/server": "2.4.0",
-    "fast-xml-parser": "5.11.2",
-    "fflate": "0.8.3",
-    "unpdf": "1.9.1",
     "zod": "4.6.7"
   },
   "devDependencies": {

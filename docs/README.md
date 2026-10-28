@@ -4,7 +4,7 @@
 
 ## 現在の構成
 
-- 各学生が本人のCloudflareへデプロイする、読み取り専用のMCPです。Google Classroomの授業・公開済み課題・一般配布資料・自分の提出状況とDrive添付本文を8ツールで提供します。
+- 各学生が本人のCloudflareへデプロイする、読み取り専用のMCPです。Google Classroomの授業・公開済み課題・一般配布資料・自分の提出状況・添付参照を9ツール（うち1つは互換名）で提供します。添付本文と元ファイルの取得はクライアント側のGoogle Driveプラグインへ引き継ぎます。
 - Google認証情報はOAuth Providerが OAUTH_KV の認可情報へ暗号化して保存します。
 - PUBLIC_URL などの実行時変数と認証情報はWorkerのSettingsで管理します。wrangler.jsonc には実URL・資格情報を保存せず、keep_vars: true で設定を保持します。Worker名とKVのbinding・IDは設定ファイルで管理し、ローカル開発はGit対象外の .dev.vars を使います。
 
