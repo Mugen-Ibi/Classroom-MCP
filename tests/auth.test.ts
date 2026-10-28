@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { authHandler } from "../src/auth";
 import type { Env } from "../src/types";
+import { MCP_READ_SCOPES } from "../src/scopes";
 
 describe("Bounded consent form", () => {
   it("keeps Classroom consent scopes through approval", async () => {
@@ -10,10 +11,11 @@ describe("Bounded consent form", () => {
       parseAuthRequest: vi.fn(async () => ({
         scope: ["classroom:read", "offline_access"],
       })),
-      describeConsent: vi.fn(async () => ({
+      describeConsent: vi.fn(async (request) => ({
         clientName: "Synthetic client",
         redirectHost: "client.example",
         redirectIsLoopback: false,
+        scope: request.scope,
       })),
       beginConsent: vi.fn(async (request) => {
         pending = { scope: [...request.scope] };
@@ -54,7 +56,9 @@ describe("Bounded consent form", () => {
       env,
     );
     expect(approved.status).toBe(302);
-    expect(approvedScope).toEqual(["classroom:read", "offline_access"]);
+    expect(approvedScope).toEqual([...MCP_READ_SCOPES, "offline_access"]);
+    const googleUrl = new URL(approved.headers.get("Location")!);
+    expect(googleUrl.searchParams.get("scope")).toContain("drive.readonly");
   });
   it("rejects an oversized chunked body while reading and cancels the stream", async () => {
     const approveConsent = vi.fn();

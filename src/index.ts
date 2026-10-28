@@ -9,6 +9,7 @@ import { ClassroomClient } from "./classroom";
 import { emailAllowed, refreshGoogleGrant } from "./google";
 import { createClassroomServer } from "./mcp";
 import type { Env, GoogleAccess, GoogleGrant } from "./types";
+import { MCP_READ_SCOPES, permitsMcpScope } from "./scopes";
 
 export async function exchangeMcpToken(
   options: TokenExchangeCallbackOptions<Env>,
@@ -22,10 +23,9 @@ export async function exchangeMcpToken(
   return {
     newProps: grant,
     accessTokenProps,
-    // Limit newly issued access tokens to the Classroom API permission while
-    // retaining the grant and its refresh permissions for existing connections.
-    accessTokenScope: options.requestedScope.filter(
-      (scope) => scope === MCP_SCOPE,
+    // Intersect the approved MCP scopes with actual Google permissions.
+    accessTokenScope: options.requestedScope.filter((scope) =>
+      permitsMcpScope(scope, grant.googleScopes),
     ),
     accessTokenTTL: Math.max(
       1,
@@ -65,6 +65,9 @@ function createProvider(env: Env) {
             createClassroomServer(
               new ClassroomClient(props.accessToken, request.signal),
               bindings.PUBLIC_URL,
+              ctx.auth.scope.filter((scope) =>
+                permitsMcpScope(scope, props.googleScopes),
+              ),
             ),
           {
             route: "/mcp",
@@ -90,7 +93,7 @@ function createProvider(env: Env) {
     tokenEndpoint: "/oauth/token",
     clientRegistrationEndpoint: "/oauth/register",
     clientIdMetadataDocumentEnabled: true,
-    scopesSupported: [MCP_SCOPE, "offline_access"],
+    scopesSupported: [...MCP_READ_SCOPES, "offline_access"],
     requiredScopes: [MCP_SCOPE],
     resourceMetadata: {
       resource: `${env.PUBLIC_URL}/mcp`,

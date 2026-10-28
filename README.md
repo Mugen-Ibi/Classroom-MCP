@@ -12,26 +12,30 @@
 
 Google OAuthをExternal / Testingで使う場合、この構成の更新トークンは7日で期限切れになります。個人デプロイでも再接続が必要です。Cloudflare・Googleの無料枠や料金、利用制限は各自のアカウントで確認してください。
 
-Google Classroomの授業・公開済み課題・自分の提出状況を、ChatGPTなどのMCPクライアントから読み取るCloudflare Workerです。Googleログイン、MCP OAuth認可、Googleトークンの更新に対応しています。
+Google Classroomの授業・公開済み課題・一般配布資料・自分の提出状況と、Drive添付資料の本文を、ChatGPTなどのMCPクライアントから読み取るCloudflare Workerです。Googleログイン、MCP OAuth認可、Googleトークンの更新に対応しています。
 
 ```text
 ChatGPT / MCPクライアント
   → MCP OAuth（クライアントごとの接続許可）
   → Cloudflare Workers /mcp（Streamable HTTP）
   → Google OAuth → Google Classroom API（読み取り専用）
+                 → Google Drive API（Classroom添付資料の読み取り）
 ```
 
 SDK v2のstateless MCPを使います。Durable Objectsは不要です。Googleの認証情報はWorkers OAuth ProviderがKV内に暗号化して保存します。課題の作成・提出・編集は実装していません。各接続はログインした本人のGoogleアカウントを使います。
 
 ## MCPツール
 
-| ツール                 | 内容                                          |
-| ---------------------- | --------------------------------------------- |
-| `list_courses`         | 自分が学生として所属する授業。既定はACTIVE    |
-| `list_assignments`     | 指定授業の公開済み課題。締切範囲を指定可能    |
-| `get_assignment`       | 課題の説明・締切・添付資料へのリンク          |
-| `list_my_submissions`  | 自分の提出状況。課題ID省略で授業内の全課題    |
-| `list_due_assignments` | 授業をまたぐ締切と提出状況。既定は今から7日間 |
+| ツール                   | 内容                                              |
+| ------------------------ | ------------------------------------------------- |
+| `list_courses`           | 自分が学生として所属する授業。既定はACTIVE        |
+| `list_assignments`       | 指定授業の公開済み課題。締切範囲を指定可能        |
+| `get_assignment`         | 課題の説明・締切・添付資料へのリンク              |
+| `list_materials`         | 指定授業の公開済み一般配布資料。更新日時の降順    |
+| `get_material`           | 一般配布資料の説明と添付資料の配列                |
+| `get_attachment_content` | 課題・一般配布資料に添付されたDriveファイルの本文 |
+| `list_my_submissions`    | 自分の提出状況。課題ID省略で授業内の全課題        |
+| `list_due_assignments`   | 授業をまたぐ締切と提出状況。既定は今から7日間     |
 
 `list_due_assignments`は既定で`TURNED_IN`と`RETURNED`を除外します。返却済み課題を再確認したい場合は`pendingOnly: false`を指定してください。取得できない提出状態は`UNKNOWN`であり、未提出と断定できません。期限超過分は`dueAfter`に過去の日時を指定して含めます。
 
@@ -41,7 +45,7 @@ SDK v2のstateless MCPを使います。Durable Objectsは不要です。Google�
 
 Classroomへの読み取りは、通信失敗・タイムアウト・HTTP 408/429/500/502/503/504で最大2回リトライします。待機は1秒、2秒を基準とする指数バックオフにランダムな揺らぎを加え、`Retry-After`があればその待機時間以上を確保します。待機が45秒の処理上限を超える場合は再試行を打ち切ります。各試行はレスポンス本文の読み取りを含め最大15秒です。認証・権限・存在のエラー（401/403/404）は自動リトライせず、再接続や設定確認を促します。
 
-添付資料のURLは返しますが、Driveファイルの本文は読み取りません。本文の解析には別途Google Drive連携を使用してください。
+添付本文は`get_attachment_content`で取得します。PDF、DOCX、PPTX、Google Docs/Slides/Sheets、UTF-8テキストに対応します。Classroomの公開済みの親項目を毎回確認し、その`materials`配列の0始まりの添付番号を指定します。任意のDriveファイルIDや外部URLは受け付けません。画像・図表の解析やOCRには対応しません。ファイルは5 MiB、PDFは100ページ、PPTXは100スライド、抽出本文は50万文字までです。`nextOffset`がある場合は続きを取得し、`warnings`と`version`を確認してください。Google Sheetsは最初のシートのみです。詳しい設計、入力例、制約は[資料取得機能](docs/materials.md)を参照してください。
 
 締切の集約ではGoogle APIの`fields`で転送項目を限定します。課題の説明、締切、教材・提出ファイルへの参照は保持し、採点・変更履歴などのメタデータは省略します。対象課題すべての提出状態が揃った時点で、提出一覧の後続ページを読みません。個別ツールは従来どおり完全なリソースを返します。MCPリクエストのキャンセルはGoogleへの取得とリトライ待機にも伝播します。本番のWorkerコードはWranglerでminifyします。
 
@@ -66,7 +70,7 @@ Googleの認証情報は後述の実行時Secretsへ設定します。KVのbindi
 以下のURLの`your-subdomain`は例示です。実際にデプロイしたWorkerのURLに置き換えてください。
 
 1. [Google Cloud Console](https://console.cloud.google.com/)でプロジェクトを作成、または選択します。
-2. **APIとサービス → ライブラリ**で**Google Classroom API**を有効にします。
+2. **APIとサービス → ライブラリ**で**Google Classroom API**と**Google Drive API**を有効にします。
 3. **Google Auth Platform**でブランド情報（アプリ名、サポートメール、連絡先）を設定します。
 4. **対象 / Audience**を設定します。個人のプロジェクトはExternalとTestingで始め、自分が使うGoogleアカウントをテストユーザーに追加します。学校アカウントの内部アプリを作成する場合は組織のポリシーに従います。
 5. **データアクセス / Data Access**に以下のスコープを追加します。
@@ -74,6 +78,8 @@ Googleの認証情報は後述の実行時Secretsへ設定します。KVのbindi
    - `https://www.googleapis.com/auth/userinfo.email`（OAuthリクエストでは`email`を使用）
    - `https://www.googleapis.com/auth/classroom.courses.readonly`
    - `https://www.googleapis.com/auth/classroom.coursework.me.readonly`
+   - `https://www.googleapis.com/auth/classroom.courseworkmaterials.readonly`
+   - `https://www.googleapis.com/auth/drive.readonly`
 6. **クライアント / Clients**で**ウェブアプリケーション**型のOAuthクライアントを作成します。
 7. **承認済みのリダイレクトURI**に、次を完全一致で登録します。
 
@@ -85,7 +91,9 @@ Googleの認証情報は後述の実行時Secretsへ設定します。KVのbindi
 
 8. クライアントIDとクライアントシークレットを、次のCloudflareのSecretsへ設定します。
 
-Classroomの`classroom.coursework.me.readonly`は、自分の課題と提出状況の読み取りをカバーします。Google Auth Platformでは同等の`classroom.student-submissions.me.readonly`として表示・保存される場合があり、サーバーはどちらの権限名も受け入れます。教師用スコープや書き込みスコープは要求しません。Googleの同意画面で両方のClassroom読み取り権限を許可してください。
+Classroomの`classroom.coursework.me.readonly`は、自分の課題と提出状況の読み取りをカバーします。Google Auth Platformでは同等の`classroom.student-submissions.me.readonly`として表示・保存される場合があり、サーバーはどちらの権限名も受け入れます。教師用スコープや書き込みスコープは要求しません。Googleの同意画面で要求された読み取り権限を許可してください。
+
+`drive.readonly`はGoogle上ではアクセス可能な全Driveファイルを読み取れる広い権限です。アプリ側ではClassroomの指定項目に添付されたファイルだけを取得します。この範囲をMCPの同意画面にも表示します。一般公開するOAuthアプリではGoogleの制限付きスコープの審査要件も確認してください。
 
 ExternalかつTestingのGoogle OAuthでは、この構成の更新トークンは7日で期限切れになるため、定期的に再接続が必要です。継続運用する場合はGoogleの公開・審査要件を確認してください。学校の管理者が外部アプリへのアクセスを制限している場合は、管理者の許可が必要です。
 
@@ -122,7 +130,9 @@ GoogleのSecretsが未設定でもWorkerはデプロイ可能ですが、`/healt
 
 - MCP URL: `https://classroom-mcp.your-subdomain.workers.dev/mcp`
 - 認証: **OAuth**
-- クライアントの接続許可画面で返送先を確認 → Googleアカウントでログイン → Classroomの読み取り権限を許可
+- クライアントの接続許可画面で返送先とDrive権限の範囲を確認 → Googleアカウントでログイン → 要求された読み取り権限を許可
+
+既存接続の権限は自動拡張しません。デプロイ更新後、Google Cloudへ追加スコープとDrive APIを設定し、MCPを再接続して新しい同意を行ってください。以前の接続でも課題関連の5ツールは引き続き利用できます。追加3ツールは権限不足なら再接続を案内します。
 
 ChatGPT側のGoogle OAuthクライアントIDを作成する必要はありません。ChatGPTのOAuth接続先はこのWorkerで、GoogleにはWorkerがOAuthクライアントとして接続します。MCP側はCIMDと動的クライアント登録の両方に対応しています。
 
@@ -131,14 +141,17 @@ ChatGPT側のGoogle OAuthクライアントIDを作成する必要はありま�
 ```text
 Classroomから今週締切の課題を取得して、日本時間で締切順に並べて。
 提出状況がUNKNOWNのものは、確認が必要な課題として区別して。
+
+この授業の配布資料を一覧にし、指定した資料の添付PDFの本文を取得して要点をまとめて。
+取得時の警告や読み取れない図表があれば明記して。
 ```
 
 ## データと認証情報
 
 - GoogleのOAuthクライアントシークレットは、自分のWorkerの実行時Secretに保存します。
 - OAuthクライアント、認可状態、暗号化されたGoogle認証情報は、自分のCloudflare KVに保存します。
-- 授業・課題・提出状況の共有キャッシュは実装していません。読み取った結果は接続先のMCPクライアントへ返るため、そのサービスのデータ取り扱い設定も確認してください。
-- 添付資料はリンクを返すだけで、Driveファイルの本文を取得しません。
+- 授業・課題・資料・提出状況の共有キャッシュは実装していません。読み取った結果は接続先のMCPクライアントへ返るため、そのサービスのデータ取り扱い設定も確認してください。
+- 添付ファイルの取得・本文抽出はWorkerのメモリ内で行い、KVや外部解析サービスへ保存・送信しません。抽出した本文はMCPクライアントへ返します。
 - ローカルの`.dev.vars`や認証トークンをコミットしないでください。問い合わせにはSecret、OAuthコード、トークン、学生情報を含めず、エラー名と再現手順を添えてください。
 
 接続の取り消しとWorkerの削除は[個人デプロイガイド](docs/personal-deployment.md#利用停止と認証の取り消し)を参照してください。アイコンの元画像と生成プロンプトは[design/README.md](design/README.md)、設計と性能の検証記録は[REVIEW.md](REVIEW.md)にあります。
@@ -169,25 +182,30 @@ MCP Inspectorで確認する場合は`npx @modelcontextprotocol/inspector`を実
 
 ## トラブルシューティング
 
-| 症状                    | 確認する設定                                                                      |
-| ----------------------- | --------------------------------------------------------------------------------- |
-| `redirect_uri_mismatch` | Googleに登録した`/callback`と`PUBLIC_URL`。末尾スラッシュの違いも確認             |
-| `access_denied`         | Googleのテストユーザー、全Classroom読み取り権限、ALLOWED_EMAILS、学校の管理者設定 |
-| Google APIの403         | Classroom APIが有効か、学生として所属しているか、OAuth権限と管理者ポリシー        |
-| 7日後に認証が切れる     | GoogleのTesting状態。MCPを再接続                                                  |
-| Workerの503             | 実行時Secrets、OAUTH_KVのバインディング、PUBLIC_URLの設定                         |
-| GitHubからのビルド失敗  | Worker名一致、Node.js 24以上、ビルドコマンド、KV設定                              |
-| 締切一覧が不完全        | `warnings`を確認し、courseIdを指定して再検索                                      |
+| 症状                     | 確認する設定                                                                      |
+| ------------------------ | --------------------------------------------------------------------------------- |
+| `redirect_uri_mismatch`  | Googleに登録した`/callback`と`PUBLIC_URL`。末尾スラッシュの違いも確認             |
+| `access_denied`          | Googleのテストユーザー、全Classroom読み取り権限、ALLOWED_EMAILS、学校の管理者設定 |
+| Google APIの403          | Classroom APIが有効か、学生として所属しているか、OAuth権限と管理者ポリシー        |
+| 7日後に認証が切れる      | GoogleのTesting状態。MCPを再接続                                                  |
+| Workerの503              | 実行時Secrets、OAUTH_KVのバインディング、PUBLIC_URLの設定                         |
+| GitHubからのビルド失敗   | Worker名一致、Node.js 24以上、ビルドコマンド、KV設定                              |
+| 締切一覧が不完全         | `warnings`を確認し、courseIdを指定して再検索                                      |
+| 資料ツールが再接続を要求 | 追加のMCP権限とGoogle読み取り権限への再同意                                       |
+| Drive APIの403           | Drive APIの有効化、再同意、ファイル共有・ダウンロード制限、学校の管理者設定       |
+| 本文抽出エラー           | 5 MiB・100ページ/スライド・本文50万文字の制限、暗号化・破損、対応形式。原本を確認 |
 
 ソースではOAuthコードやトークンをログへ出力しません。初期設定でWorkers Observabilityも無効にしています。運用でログを有効にする場合は、認証コールバックのURLやヘッダーを記録しない設定にしてください。
 
 ## 参照
 
-- [MCP SDK 2.2.0 handler / release](https://github.com/modelcontextprotocol/typescript-sdk/releases/tag/v2.2.0)
+- [MCP SDK 2.4.0 handler / release](https://github.com/modelcontextprotocol/typescript-sdk/releases/tag/v2.4.0)
 - [Dependency maintenance](docs/dependencies.md)
 - [Workers OAuth Provider: upstream sign-in](https://github.com/cloudflare/workers-oauth-provider/blob/main/docs/upstream-sign-in.md)
 - [Workers Builds](https://developers.cloudflare.com/workers/ci-cd/builds/)
 - [Classroom API: studentSubmissions.list](https://developers.google.com/workspace/classroom/reference/rest/v1/courses.courseWork.studentSubmissions/list)
 - [Classroom API: CourseWorkのUTC締切](https://developers.google.com/workspace/classroom/reference/rest/v1/courses.courseWork)
+- [Classroom API: courseWorkMaterials.list](https://developers.google.com/workspace/classroom/reference/rest/v1/courses.courseWorkMaterials/list)
+- [Drive API: ダウンロードとエクスポート](https://developers.google.com/workspace/drive/api/guides/manage-downloads)
 - [Google OAuthの更新トークン有効期限](https://developers.google.com/identity/protocols/oauth2#expiration)
 - [ChatGPTの開発者モードとMCP](https://help.openai.com/en/articles/12584461-developer-mode-and-full-mcp-connectors-in-chatgpt)

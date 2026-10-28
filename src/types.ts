@@ -15,9 +15,29 @@ export interface GoogleGrant {
   accessToken: string;
   expiresAt: number;
   refreshToken: string;
+  googleScopes?: string[];
 }
 
 export type GoogleAccess = Omit<GoogleGrant, "refreshToken">;
+
+export interface MaterialAttachment {
+  driveFile?: {
+    driveFile?: { id: string; title?: string; alternateLink?: string };
+  };
+  link?: { url: string; title?: string };
+  youtubeVideo?: { id: string; title?: string; alternateLink?: string };
+  form?: { formUrl: string; title?: string };
+}
+
+export interface CourseMaterial {
+  id: string;
+  courseId: string;
+  title: string;
+  description?: string;
+  state?: string;
+  materials?: MaterialAttachment[];
+  [key: string]: unknown;
+}
 
 export interface Course {
   id: string;
@@ -31,6 +51,8 @@ export interface Assignment {
   id: string;
   courseId: string;
   title: string;
+  state?: string;
+  materials?: MaterialAttachment[];
   dueDate?: { year: number; month: number; day: number };
   dueTime?: {
     hours?: number;

@@ -83,6 +83,8 @@ describe("Worker OAuth and MCP in workerd", () => {
       await send("/.well-known/oauth-authorization-server")
     ).json();
     expect(metadata.scopes_supported).toContain("classroom:read");
+    expect(metadata.scopes_supported).toContain("classroom:materials:read");
+    expect(metadata.scopes_supported).toContain("classroom:attachments:read");
     expect(metadata.scopes_supported).toContain("offline_access");
     const unauthorized = await send("/mcp", { method: "POST" });
     expect(unauthorized.status).toBe(401);
@@ -171,6 +173,10 @@ describe("Worker OAuth and MCP in workerd", () => {
     remember(approved as unknown as Response);
     const googleUrl = new URL(approved.headers.get("Location")!);
     expect(googleUrl.hostname).toBe("accounts.google.com");
+    expect(googleUrl.searchParams.get("scope")).toContain(
+      "classroom.courseworkmaterials.readonly",
+    );
+    expect(googleUrl.searchParams.get("scope")).toContain("drive.readonly");
     const callback = `/callback?state=${googleUrl.searchParams.get("state")}&code=google-code`;
     expect((await send(callback)).status).toBe(400);
     const completed = await send(callback, {
@@ -202,7 +208,7 @@ describe("Worker OAuth and MCP in workerd", () => {
     expect(JSON.stringify(issued)).not.toContain("google-refresh");
   });
 
-  it("lists five read-only tools and reads Classroom through an authenticated MCP call", async () => {
+  it("lists eight read-only tools and reads Classroom through an authenticated MCP call", async () => {
     const headers = {
       Authorization: `Bearer ${mcpToken}`,
       "Content-Type": "application/json",
@@ -242,7 +248,7 @@ describe("Worker OAuth and MCP in workerd", () => {
     });
     expect(listed.status, await listed.clone().text()).toBe(200);
     const list = await rpc(listed as unknown as Response);
-    expect(list.result.tools).toHaveLength(5);
+    expect(list.result.tools).toHaveLength(8);
     expect(
       list.result.tools.every(
         (tool: { annotations: { readOnlyHint: boolean } }) =>
@@ -264,6 +270,39 @@ describe("Worker OAuth and MCP in workerd", () => {
       "Math",
     );
     expect(JSON.stringify(result)).not.toContain("google-access");
+    for (const [name, args, expected] of [
+      ["list_materials", { courseId: "c1" }, "Lecture materials"],
+      [
+        "get_material",
+        { courseId: "c1", materialId: "m1" },
+        "Read the attachment",
+      ],
+      [
+        "get_attachment_content",
+        {
+          courseId: "c1",
+          sourceType: "material",
+          sourceId: "m1",
+          attachmentIndex: 0,
+        },
+        "Classroom attachment body fixture",
+      ],
+    ] as const) {
+      const response = await send("/mcp", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 10,
+          method: "tools/call",
+          params: { name, arguments: args },
+        }),
+      });
+      const read = (await rpc(response as unknown as Response)).result;
+      expect(read.isError).not.toBe(true);
+      expect(read.content[0].text).toContain(expected);
+      expect(JSON.stringify(read)).not.toContain("google-access");
+    }
     const invalidInput = await send("/mcp", {
       method: "POST",
       headers,

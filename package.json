@@ -31,15 +31,18 @@
   "homepage": "https://github.com/Mugen-Ibi/Classroom-MCP#readme",
   "dependencies": {
     "@cloudflare/workers-oauth-provider": "1.2.1",
-    "@modelcontextprotocol/server": "2.2.0",
-    "zod": "4.6.5"
+    "@modelcontextprotocol/server": "2.4.0",
+    "fast-xml-parser": "5.11.2",
+    "fflate": "0.8.3",
+    "unpdf": "1.9.1",
+    "zod": "4.6.7"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "5.20261006.1",
-    "miniflare": "5.20261006.1-alpha",
+    "@cloudflare/workers-types": "5.20261023.1",
+    "miniflare": "5.20261023.1-beta",
     "prettier": "3.9.9",
     "typescript": "7.0.2",
     "vitest": "5.0.3",
-    "wrangler": "4.149.0"
+    "wrangler": "4.154.0"
   }
 }

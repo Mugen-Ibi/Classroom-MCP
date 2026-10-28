@@ -1,11 +1,29 @@
 import { OAuthError } from "@cloudflare/workers-oauth-provider";
 import type { Env, GoogleGrant } from "./types";
+import {
+  ATTACHMENTS_GOOGLE_SCOPE,
+  ATTACHMENTS_SCOPE,
+  MATERIALS_GOOGLE_SCOPE,
+  MATERIALS_SCOPE,
+  MCP_READ_SCOPES,
+} from "./scopes";
 
 export const CLASSROOM_SCOPES = [
   "https://www.googleapis.com/auth/classroom.courses.readonly",
   "https://www.googleapis.com/auth/classroom.coursework.me.readonly",
 ] as const;
-export const GOOGLE_SCOPES = ["openid", "email", ...CLASSROOM_SCOPES];
+export function googleScopesFor(mcpScopes: string[]) {
+  return [
+    "openid",
+    "email",
+    ...CLASSROOM_SCOPES,
+    ...(mcpScopes.includes(MATERIALS_SCOPE) ? [MATERIALS_GOOGLE_SCOPE] : []),
+    ...(mcpScopes.includes(ATTACHMENTS_SCOPE)
+      ? [ATTACHMENTS_GOOGLE_SCOPE]
+      : []),
+  ];
+}
+export const GOOGLE_SCOPES = googleScopesFor(MCP_READ_SCOPES);
 
 function hasClassroomReadScopes(scope: string): boolean {
   const granted = new Set(scope.split(/\s+/));
@@ -49,13 +67,14 @@ export function googleAuthorizeUrl(
   env: Env,
   state: string,
   challenge: string,
+  mcpScopes = MCP_READ_SCOPES,
 ): string {
   const url = new URL("https://accounts.google.com/o/oauth2/v2/auth");
   url.search = new URLSearchParams({
     client_id: env.GOOGLE_CLIENT_ID,
     redirect_uri: `${env.PUBLIC_URL}/callback`,
     response_type: "code",
-    scope: GOOGLE_SCOPES.join(" "),
+    scope: googleScopesFor(mcpScopes).join(" "),
     access_type: "offline",
     prompt: "consent select_account",
     state,
@@ -122,6 +141,7 @@ export async function exchangeGoogleCode(
   env: Env,
   code: string,
   verifier: string,
+  mcpScopes = MCP_READ_SCOPES,
 ): Promise<GoogleGrant> {
   const token = await tokenRequest(env, {
     grant_type: "authorization_code",
@@ -129,10 +149,19 @@ export async function exchangeGoogleCode(
     code_verifier: verifier,
     redirect_uri: `${env.PUBLIC_URL}/callback`,
   });
-  if (!hasClassroomReadScopes(token.scope ?? "") || !token.refresh_token) {
+  const granted = (token.scope ?? "").split(/\s+/).filter(Boolean);
+  const optionalRequired = googleScopesFor(mcpScopes).filter(
+    (scope) =>
+      scope === MATERIALS_GOOGLE_SCOPE || scope === ATTACHMENTS_GOOGLE_SCOPE,
+  );
+  if (
+    !hasClassroomReadScopes(token.scope ?? "") ||
+    !token.refresh_token ||
+    optionalRequired.some((scope) => !granted.includes(scope))
+  ) {
     throw new OAuthError("access_denied", {
       description:
-        "Approve all Classroom read permissions and offline access, then reconnect.",
+        "Approve the requested Classroom and attachment read permissions and offline access, then reconnect.",
     });
   }
   const response = await fetch(
@@ -167,6 +196,7 @@ export async function exchangeGoogleCode(
     accessToken: token.access_token,
     expiresAt: Date.now() + token.expires_in * 1000,
     refreshToken: token.refresh_token,
+    googleScopes: granted,
   };
 }
 
@@ -192,5 +222,9 @@ export async function refreshGoogleGrant(
     accessToken: token.access_token,
     expiresAt: Date.now() + token.expires_in * 1000,
     refreshToken: token.refresh_token ?? props.refreshToken,
+    // An omitted scope retains only previously recorded permissions.
+    googleScopes: token.scope
+      ? token.scope.split(/\s+/).filter(Boolean)
+      : props.googleScopes,
   };
 }

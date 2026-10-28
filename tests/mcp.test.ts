@@ -5,7 +5,7 @@ import { createClassroomServer } from "../src/mcp";
 
 afterEach(() => vi.unstubAllGlobals());
 
-it("offers the five read-only Classroom tools and serves a course fixture", async () => {
+it("offers eight read-only Classroom tools and keeps new tools gated for legacy connections", async () => {
   const fetch = vi.fn(async () =>
     Response.json({
       courses: [{ id: "fixture-course", name: "Fixture course" }],
@@ -48,9 +48,12 @@ it("offers the five read-only Classroom tools and serves a course fixture", asyn
     listed.tools.map((tool: { name: string }) => tool.name).sort(),
   ).toEqual([
     "get_assignment",
+    "get_attachment_content",
+    "get_material",
     "list_assignments",
     "list_courses",
     "list_due_assignments",
+    "list_materials",
     "list_my_submissions",
   ]);
   expect(
@@ -69,4 +72,21 @@ it("offers the five read-only Classroom tools and serves a course fixture", asyn
     { id: "fixture-course", name: "Fixture course" },
   ]);
   expect(fetch).toHaveBeenCalledOnce();
+  const gated = await rpc("tools/call", {
+    name: "list_materials",
+    arguments: { courseId: "c1" },
+  });
+  expect(gated.isError).toBe(true);
+  expect(gated.content[0].text).toContain("Reconnect");
+  expect(fetch).toHaveBeenCalledOnce();
+  const invalidAttachment = await rpc("tools/call", {
+    name: "get_attachment_content",
+    arguments: {
+      courseId: "c1",
+      sourceType: "material",
+      sourceId: "m1",
+      attachmentIndex: -1,
+    },
+  });
+  expect(invalidAttachment.isError).toBe(true);
 });

@@ -1,5 +1,15 @@
 // Integration fixture: no real Google credentials or network requests.
 let transientFailures = 0;
+const material = {
+  id: "m1",
+  courseId: "c1",
+  title: "Lecture materials",
+  description: "Read the attachment",
+  state: "PUBLISHED",
+  materials: [
+    { driveFile: { driveFile: { id: "lecture", title: "Lecture document" } } },
+  ],
+};
 function project(data, fields) {
   if (!fields) return data;
   const match = fields.match(/^nextPageToken,(\w+)\(([^)]+)\)$/);
@@ -30,7 +40,7 @@ export default {
         expires_in: 3600,
         refresh_token: "google-refresh",
         scope:
-          "https://www.googleapis.com/auth/classroom.courses.readonly https://www.googleapis.com/auth/classroom.coursework.me.readonly",
+          "https://www.googleapis.com/auth/classroom.courses.readonly https://www.googleapis.com/auth/classroom.coursework.me.readonly https://www.googleapis.com/auth/classroom.courseworkmaterials.readonly https://www.googleapis.com/auth/drive.readonly",
       });
     }
     if (url.hostname === "openidconnect.googleapis.com")
@@ -39,6 +49,33 @@ export default {
         email: "student@example.com",
         email_verified: true,
       });
+    if (
+      url.hostname === "classroom.googleapis.com" &&
+      url.pathname === "/v1/courses/c1/courseWorkMaterials"
+    )
+      return Response.json({ courseWorkMaterial: [material] });
+    if (
+      url.hostname === "classroom.googleapis.com" &&
+      url.pathname === "/v1/courses/c1/courseWorkMaterials/m1"
+    )
+      return Response.json(material);
+    if (
+      url.hostname === "www.googleapis.com" &&
+      url.pathname === "/drive/v3/files/lecture"
+    )
+      return Response.json({
+        id: "lecture",
+        name: "Lecture document",
+        mimeType: "application/vnd.google-apps.document",
+        version: "3",
+        capabilities: { canDownload: true },
+      });
+    if (
+      url.hostname === "www.googleapis.com" &&
+      url.pathname === "/drive/v3/files/lecture/export" &&
+      url.searchParams.get("mimeType") === "text/plain"
+    )
+      return new Response("Classroom attachment body fixture");
     if (
       url.hostname === "classroom.googleapis.com" &&
       url.pathname === "/v1/courses" &&

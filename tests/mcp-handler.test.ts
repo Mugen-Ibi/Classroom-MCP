@@ -221,3 +221,51 @@ it("does not invent SDK client metadata for a provider without a client ID", asy
   ).toHaveLength(1);
   expect(f.contexts[0]!.authInfo).toBeUndefined();
 });
+
+it("isolates simultaneous clients using the same JSON-RPC ID", async () => {
+  let entered = 0;
+  let release!: () => void;
+  const ready = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const handler = createMcpHandler(
+    (context) => {
+      const server = new McpServer({ name: "isolation-fixture", version: "1" });
+      server.registerTool(
+        "echo",
+        { inputSchema: { message: z.string() } },
+        async ({ message }) => {
+          if (++entered === 2) release();
+          await ready;
+          return {
+            content: [
+              {
+                type: "text",
+                text: `${context.authInfo?.clientId}:${message}`,
+              },
+            ],
+          };
+        },
+      );
+      return server;
+    },
+    {
+      route: "/mcp",
+      allowedHostnames: ["fixture.example.test"],
+      allowedOriginHostnames: ["chatgpt.com"],
+    },
+  );
+  const results = await Promise.all(
+    ["first", "second"].map(async (clientId) => {
+      const response = await handler(
+        request("tools/call", {
+          name: "echo",
+          arguments: { message: clientId },
+        }),
+        { ...auth, clientId },
+      );
+      return (await rpc(response)).result.content[0].text;
+    }),
+  );
+  expect(results).toEqual(["first:first", "second:second"]);
+});

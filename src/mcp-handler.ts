@@ -42,7 +42,11 @@ function withCors(response: Response): Response {
 // Called only after the existing OAuth/scope/account/Google-expiry gates.
 // Use public provider auth fields; never read credentials from request headers.
 export function createMcpHandler(factory: McpServerFactory, options: Options) {
-  const handler = createSdkHandler(factory, { legacy: "stateless" });
+  const handler = createSdkHandler(factory, {
+    legacy: "stateless",
+    // Includes protocol metadata; a JSON-escaped 4,096-character page token fits.
+    maxRequestBodySize: 32 * 1024,
+  });
   return async (request: Request, auth: OAuthResourceAuth) => {
     try {
       if (new URL(request.url).pathname !== options.route)

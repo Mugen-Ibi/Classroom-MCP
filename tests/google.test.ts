@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   CLASSROOM_SCOPES,
+  GOOGLE_SCOPES,
   emailAllowed,
   exchangeGoogleCode,
   googleAuthorizeUrl,
@@ -9,6 +10,11 @@ import {
 } from "../src/google";
 import { consentPage } from "../src/auth";
 import type { Env, GoogleGrant } from "../src/types";
+import {
+  ATTACHMENTS_GOOGLE_SCOPE,
+  MATERIALS_GOOGLE_SCOPE,
+  MCP_SCOPE,
+} from "../src/scopes";
 
 const env = {
   PUBLIC_URL: "https://classroom.test",
@@ -34,9 +40,7 @@ describe("Google OAuth", () => {
     );
     expect(url.searchParams.get("access_type")).toBe("offline");
     expect(url.searchParams.get("code_challenge_method")).toBe("S256");
-    expect(url.searchParams.get("scope")).toBe(
-      `openid email ${CLASSROOM_SCOPES.join(" ")}`,
-    );
+    expect(url.searchParams.get("scope")).toBe(GOOGLE_SCOPES.join(" "));
     expect(CLASSROOM_SCOPES.every((scope) => scope.endsWith(".readonly"))).toBe(
       true,
     );
@@ -103,7 +107,7 @@ describe("Google OAuth", () => {
               access_token: "access",
               expires_in: 3600,
               refresh_token: "refresh",
-              scope: CLASSROOM_SCOPES.join(" "),
+              scope: GOOGLE_SCOPES.join(" "),
             })
           : Response.json({
               sub: "u",
@@ -142,7 +146,7 @@ describe("Google OAuth", () => {
               access_token: "access",
               expires_in: 3600,
               refresh_token: "refresh",
-              scope: `${CLASSROOM_SCOPES[0]} https://www.googleapis.com/auth/classroom.student-submissions.me.readonly`,
+              scope: `${CLASSROOM_SCOPES[0]} https://www.googleapis.com/auth/classroom.student-submissions.me.readonly ${MATERIALS_GOOGLE_SCOPE} ${ATTACHMENTS_GOOGLE_SCOPE}`,
             })
           : Response.json({
               sub: "u",
@@ -182,5 +186,63 @@ describe("Google OAuth", () => {
     await expect(refreshGoogleGrant(env, props)).rejects.toMatchObject({
       code: "invalid_grant",
     });
+  });
+
+  it("allows a legacy grant without silently requesting new permissions", async () => {
+    const url = new URL(
+      googleAuthorizeUrl(env, "state", "challenge", [MCP_SCOPE]),
+    );
+    expect(url.searchParams.get("scope")).not.toContain("drive.readonly");
+    expect(url.searchParams.get("scope")).not.toContain("courseworkmaterials");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        url.endsWith("token")
+          ? Response.json({
+              access_token: "legacy",
+              expires_in: 3600,
+              refresh_token: "refresh",
+              scope: CLASSROOM_SCOPES.join(" "),
+            })
+          : Response.json({
+              sub: "u",
+              email: "me@example.com",
+              email_verified: true,
+            }),
+      ),
+    );
+    await expect(
+      exchangeGoogleCode(env, "code", "verifier", [MCP_SCOPE]),
+    ).resolves.toMatchObject({ accessToken: "legacy" });
+    await expect(
+      exchangeGoogleCode(env, "code", "verifier"),
+    ).rejects.toMatchObject({ code: "access_denied" });
+  });
+
+  it("preserves recorded optional scopes on refresh omission and removes explicitly revoked scopes", async () => {
+    const recorded = { ...props, googleScopes: [...GOOGLE_SCOPES] };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json({ access_token: "access", expires_in: 3600 }),
+      ),
+    );
+    expect((await refreshGoogleGrant(env, recorded)).googleScopes).toEqual(
+      recorded.googleScopes,
+    );
+    expect((await refreshGoogleGrant(env, props)).googleScopes).toBeUndefined();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json({
+          access_token: "access",
+          expires_in: 3600,
+          scope: CLASSROOM_SCOPES.join(" "),
+        }),
+      ),
+    );
+    expect((await refreshGoogleGrant(env, recorded)).googleScopes).toEqual([
+      ...CLASSROOM_SCOPES,
+    ]);
   });
 });

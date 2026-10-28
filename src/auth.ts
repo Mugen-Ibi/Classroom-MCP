@@ -7,8 +7,14 @@ import {
 } from "@cloudflare/workers-oauth-provider";
 import { exchangeGoogleCode, googleAuthorizeUrl, s256 } from "./google";
 import type { Env } from "./types";
+import {
+  ATTACHMENTS_SCOPE,
+  MATERIALS_SCOPE,
+  MCP_READ_SCOPES,
+  MCP_SCOPE,
+} from "./scopes";
 
-export const MCP_SCOPE = "classroom:read";
+export { MCP_SCOPE } from "./scopes";
 
 async function readConsentForm(request: Request): Promise<string | null> {
   const limit = 8192;
@@ -58,6 +64,8 @@ export function consentPage(
 <p>認証情報の返送先: <strong>${escapeHtml(details.redirectHost)}</strong></p>
 ${details.redirectIsLoopback ? "<p>コンピューター内のアプリに接続権限を渡します。自分で開始した接続であることを確認してください。</p>" : ""}
 <p>許可する権限: ${MCP_SCOPE}（授業、公開済み課題、添付資料へのリンク、自分の提出状況の読み取り）</p>
+${details.scope.includes(MATERIALS_SCOPE) ? `<p>${MATERIALS_SCOPE}（公開済みの一般配布資料の一覧・説明の読み取り）</p>` : ""}
+${details.scope.includes(ATTACHMENTS_SCOPE) ? `<p>${ATTACHMENTS_SCOPE}（Classroomに添付されたDrive資料の本文の読み取り）。GoogleのDrive読み取り権限は、Google上ではアクセス可能な全Driveファイルを対象にします。このサーバーは指定の課題・配布資料への添付を確認したファイルだけを取得します。本文は接続先のクライアントへ送られます。</p>` : ""}
 <p>次の画面でGoogleアカウントを選択し、読み取り権限を許可します。接続の継続にはGoogleのオフラインアクセスを使用します。</p>
 <form method="post" action="/authorize"><input type="hidden" name="handle" value="${escapeHtml(handle)}">
 <button name="decision" value="approve">許可してGoogleへ</button> <button name="decision" value="deny">拒否</button></form>
@@ -114,7 +122,7 @@ export const authHandler = {
           const authRequest = await oauth.parseAuthRequest(request);
           // Freeze the permissions shown on this page into the encrypted transaction.
           // Deployments/Secrets can change between GET and POST; POST must not add scopes.
-          authRequest.scope = [MCP_SCOPE, "offline_access"];
+          authRequest.scope = [...MCP_READ_SCOPES, "offline_access"];
           const details = await oauth.describeConsent(authRequest);
           const consent = await oauth.beginConsent(authRequest);
           consent.headers.set("Content-Type", "text/html; charset=utf-8");
@@ -153,7 +161,12 @@ export const authHandler = {
           });
           upstream.headers.set(
             "Location",
-            googleAuthorizeUrl(env, upstream.state, await s256(verifier)),
+            googleAuthorizeUrl(
+              env,
+              upstream.state,
+              await s256(verifier),
+              approved.request.scope,
+            ),
           );
           upstream.headers.set("Referrer-Policy", "no-referrer");
           return new Response(null, { status: 302, headers: upstream.headers });
@@ -176,6 +189,7 @@ export const authHandler = {
           env,
           code,
           resumed.data.verifier,
+          resumed.request.scope,
         );
         const completed = await oauth.completeAuthorization({
           request: resumed.request,
