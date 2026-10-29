@@ -220,6 +220,10 @@ export class ClassroomClient {
     const work = await this.get<Assignment>(
       `courses/${encodeURIComponent(courseId)}/courseWork/${encodeURIComponent(assignmentId)}`,
     );
+    if (work.state !== "PUBLISHED")
+      throw new ClassroomError(
+        "Only published Classroom assignments can be read.",
+      );
     return { ...work, dueAt: dueAt(work) };
   }
 

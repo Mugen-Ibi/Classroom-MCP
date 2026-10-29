@@ -6,6 +6,7 @@ const work = (id: string, day = 2): Assignment => ({
   id,
   courseId: "c1",
   title: id,
+  state: "PUBLISHED",
   dueDate: { year: 2026, month: 10, day },
   dueTime: { hours: 0 },
 });
@@ -539,4 +540,19 @@ describe("Classroom reads", () => {
     ).rejects.toThrow("cancelled");
     expect(mock).toHaveBeenCalledTimes(1);
   });
+});
+
+describe("Published coursework boundary", () => {
+  it.each(["DRAFT", "DELETED", undefined])(
+    "refuses direct access to coursework in state %s",
+    async (state) => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => Response.json({ ...work("a"), state })),
+      );
+      await expect(
+        new ClassroomClient("secret").getAssignment("c1", "a"),
+      ).rejects.toThrow("published");
+    },
+  );
 });

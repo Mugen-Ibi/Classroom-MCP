@@ -87,6 +87,8 @@ async function tokenRequest(
   try {
     response = await fetch("https://oauth2.googleapis.com/token", {
       method: "POST",
+      // Never forward the client secret or refresh token to a redirected origin.
+      redirect: "manual",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
         client_id: env.GOOGLE_CLIENT_ID,
@@ -103,10 +105,10 @@ async function tokenRequest(
   }
   if (!response.ok) {
     // Never relay upstream descriptions: they can contain sensitive details.
-    const data = (await response.json().catch(() => ({}))) as {
+    const data = (await response.json().catch(() => null)) as {
       error?: string;
-    };
-    if (data.error === "invalid_grant") {
+    } | null;
+    if (data?.error === "invalid_grant") {
       throw new OAuthError("invalid_grant", {
         description:
           "Google authorization expired or was revoked. Reconnect this MCP.",
@@ -118,9 +120,14 @@ async function tokenRequest(
       statusCode: 503,
     });
   }
-  const token = (await response.json()) as GoogleToken;
+  const token = (await response.json().catch(() => null)) as GoogleToken | null;
   if (
+    !token ||
+    typeof token.access_token !== "string" ||
     !token.access_token ||
+    (token.scope !== undefined && typeof token.scope !== "string") ||
+    (token.refresh_token !== undefined &&
+      (typeof token.refresh_token !== "string" || !token.refresh_token)) ||
     !Number.isFinite(token.expires_in) ||
     token.expires_in <= 0
   ) {
@@ -162,20 +169,26 @@ export async function exchangeGoogleCode(
     "https://openidconnect.googleapis.com/v1/userinfo",
     {
       headers: { Authorization: `Bearer ${token.access_token}` },
+      redirect: "manual",
       signal: AbortSignal.timeout(15_000),
     },
   );
-  if (!response.ok)
+  if (!response.ok) {
+    await response.body?.cancel().catch(() => undefined);
     throw new OAuthError("access_denied", {
       description: "Google account could not be verified.",
     });
-  const user = (await response.json()) as {
+  }
+  const user = (await response.json().catch(() => null)) as {
     sub?: string;
     email?: string;
     email_verified?: boolean;
-  };
+  } | null;
   if (
+    !user ||
+    typeof user.sub !== "string" ||
     !user.sub ||
+    typeof user.email !== "string" ||
     !user.email ||
     user.email_verified !== true ||
     !emailAllowed(user.email, env.ALLOWED_EMAILS)
@@ -206,7 +219,7 @@ export async function refreshGoogleGrant(
     grant_type: "refresh_token",
     refresh_token: props.refreshToken,
   });
-  if (token.scope && !hasClassroomReadScopes(token.scope)) {
+  if (token.scope !== undefined && !hasClassroomReadScopes(token.scope)) {
     throw new OAuthError("invalid_grant", {
       description: "Classroom read permissions were revoked. Reconnect.",
     });
@@ -217,8 +230,9 @@ export async function refreshGoogleGrant(
     expiresAt: Date.now() + token.expires_in * 1000,
     refreshToken: token.refresh_token ?? props.refreshToken,
     // An omitted scope retains only previously recorded permissions.
-    googleScopes: token.scope
-      ? token.scope.split(/\s+/).filter(Boolean)
-      : props.googleScopes,
+    googleScopes:
+      token.scope !== undefined
+        ? token.scope.split(/\s+/).filter(Boolean)
+        : props.googleScopes,
   };
 }

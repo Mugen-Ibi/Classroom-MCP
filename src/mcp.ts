@@ -116,7 +116,7 @@ export function createClassroomServer(
     "get_assignment",
     {
       description:
-        "Read one coursework item, including description, attachment references, and UTC dueAt.",
+        "Read one published coursework item, including description, attachment references, and UTC dueAt.",
       inputSchema: { courseId: id, assignmentId: id },
       annotations,
     },

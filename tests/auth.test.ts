@@ -1,7 +1,9 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { authHandler } from "../src/auth";
 import type { Env } from "../src/types";
 import { MCP_READ_SCOPES } from "../src/scopes";
+
+afterEach(() => vi.unstubAllGlobals());
 
 describe("Bounded consent form", () => {
   it("keeps Classroom consent scopes through approval", async () => {
@@ -92,5 +94,47 @@ describe("Bounded consent form", () => {
     // Node may prefetch one chunk; the unbounded source is never fully consumed.
     expect(chunks).toBeLessThanOrEqual(4);
     expect(approveConsent).not.toHaveBeenCalled();
+  });
+});
+
+describe("Public authentication response semantics", () => {
+  it("reports health as JSON with no-store caching", async () => {
+    const response = await authHandler.fetch(
+      new Request("https://classroom.test/health"),
+      {
+        GOOGLE_CLIENT_ID: "fixture-client",
+        GOOGLE_CLIENT_SECRET: "fixture-secret",
+      } as Env,
+    );
+    expect(response.headers.get("Content-Type")).toContain("application/json");
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
+    expect(await response.json()).toMatchObject({ status: "ok" });
+  });
+  it("preserves a temporary upstream authentication failure as HTTP 503", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("private network detail");
+      }),
+    );
+    const response = await authHandler.fetch(
+      new Request(
+        "https://classroom.test/callback?code=fixture-code&state=fixture-state",
+      ),
+      {
+        GOOGLE_CLIENT_ID: "fixture-client",
+        GOOGLE_CLIENT_SECRET: "fixture-secret",
+        PUBLIC_URL: "https://classroom.test",
+        OAUTH_PROVIDER: {
+          finishUpstream: async () => ({
+            request: { scope: MCP_READ_SCOPES },
+            data: { verifier: "fixture-verifier" },
+            headers: new Headers(),
+          }),
+        },
+      } as unknown as Env,
+    );
+    expect(response.status).toBe(503);
+    expect(await response.text()).not.toContain("private network detail");
   });
 });

@@ -33,7 +33,7 @@ SDK v2のstateless MCPを使います。Durable Objectsは不要です。Google�
 | -------------------------- | ---------------------------------------------------------------- |
 | `list_courses`             | 自分が学生として所属する授業。既定はACTIVE                       |
 | `list_assignments`         | 指定授業の公開済み課題。締切範囲を指定可能                       |
-| `get_assignment`           | 課題の説明・締切・添付資料へのリンク                             |
+| `get_assignment`           | 公開済み課題の説明・締切・添付資料へのリンク                     |
 | `list_materials`           | 指定授業の公開済み一般配布資料。更新日時の降順                   |
 | `get_material`             | 一般配布資料の説明と添付資料の配列                               |
 | `get_attachment_reference` | 添付のファイルID・URL・Google Driveプラグインへの引き継ぎ情報    |

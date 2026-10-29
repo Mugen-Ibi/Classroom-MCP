@@ -86,7 +86,13 @@ export const authHandler = {
           service: "classroom-mcp",
           status: configured ? "ok" : "configuration_required",
         },
-        { status: configured ? 200 : 503, headers: securityHeaders },
+        {
+          status: configured ? 200 : 503,
+          headers: {
+            ...securityHeaders,
+            "Content-Type": "application/json; charset=utf-8",
+          },
+        },
       );
     }
     if (url.pathname === "/" && request.method === "GET") {
@@ -217,7 +223,7 @@ export const authHandler = {
         );
       if (error instanceof OAuthError)
         return new Response(error.description, {
-          status: 400,
+          status: error.statusCode,
           headers: securityHeaders,
         });
       return new Response(

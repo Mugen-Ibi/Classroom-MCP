@@ -242,3 +242,99 @@ describe("Google OAuth", () => {
     ]);
   });
 });
+
+describe("Google OAuth response boundaries", () => {
+  it("never follows redirects while sending Google credentials", async () => {
+    const mock = vi.fn(async (_url: string, init: RequestInit) => {
+      return new Response(null, {
+        status: 307,
+        headers: { Location: "https://untrusted.example/token" },
+      });
+    });
+    vi.stubGlobal("fetch", mock);
+    await expect(refreshGoogleGrant(env, props)).rejects.toMatchObject({
+      code: "temporarily_unavailable",
+    });
+    expect(mock).toHaveBeenCalledOnce();
+    expect(mock.mock.calls[0]![1].redirect).toBe("manual");
+  });
+
+  it("does not follow redirects from the Google identity endpoint", async () => {
+    const calls: RequestInit[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init: RequestInit) => {
+        calls.push(init);
+        return url.endsWith("token")
+          ? Response.json({
+              access_token: "access",
+              expires_in: 3600,
+              refresh_token: "refresh",
+              scope: GOOGLE_SCOPES.join(" "),
+            })
+          : new Response(null, {
+              status: 302,
+              headers: { Location: "https://untrusted.example/profile" },
+            });
+      }),
+    );
+    await expect(
+      exchangeGoogleCode(env, "code", "verifier"),
+    ).rejects.toMatchObject({ code: "access_denied" });
+    expect(calls).toHaveLength(2);
+    expect(calls.every((call) => call.redirect === "manual")).toBe(true);
+  });
+
+  it("treats an explicitly empty refreshed scope as revoked, not omitted", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json({ access_token: "access", expires_in: 3600, scope: "" }),
+      ),
+    );
+    await expect(
+      refreshGoogleGrant(env, { ...props, googleScopes: [...GOOGLE_SCOPES] }),
+    ).rejects.toMatchObject({ code: "invalid_grant" });
+  });
+
+  it.each([
+    null,
+    { access_token: 42, expires_in: 3600 },
+    { access_token: "access", expires_in: 3600, scope: [] },
+    { access_token: "access", expires_in: 3600, refresh_token: {} },
+  ])(
+    "rejects malformed token values with a sanitized OAuth error: %j",
+    async (token) => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => Response.json(token)),
+      );
+      await expect(refreshGoogleGrant(env, props)).rejects.toMatchObject({
+        code: "temporarily_unavailable",
+      });
+    },
+  );
+});
+
+it.each([
+  null,
+  { sub: 42, email: "me@example.com", email_verified: true },
+  { sub: "u", email: {}, email_verified: true },
+])("rejects malformed Google identity values: %j", async (user) => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) =>
+      url.endsWith("token")
+        ? Response.json({
+            access_token: "access",
+            expires_in: 3600,
+            refresh_token: "refresh",
+            scope: GOOGLE_SCOPES.join(" "),
+          })
+        : Response.json(user),
+    ),
+  );
+  await expect(
+    exchangeGoogleCode(env, "code", "verifier"),
+  ).rejects.toMatchObject({ code: "access_denied" });
+});
